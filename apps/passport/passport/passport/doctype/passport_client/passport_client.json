@@ -1,0 +1,79 @@
+{
+ "doctype": "DocType",
+ "name": "Passport Client",
+ "module": "Passport",
+ "autoname": "field:client_id",
+ "engine": "InnoDB",
+ "creation": "2026-10-11 00:00:00",
+ "modified": "2026-10-11 00:00:00",
+ "modified_by": "Administrator",
+ "owner": "Administrator",
+ "naming_rule": "Expression",
+ "field_order": [
+  "title",
+  "client_id",
+  "public_jwk",
+  "home_url",
+  "redirect_uri",
+  "enabled"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "label": "Client ID",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "public_jwk",
+   "fieldtype": "Long Text",
+   "label": "Site Ed25519 public JWK",
+   "reqd": 1
+  },
+  {
+   "fieldname": "home_url",
+   "fieldtype": "Data",
+   "label": "Home URL",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Origin of the site, e.g. http://site1.localhost:8000"
+  },
+  {
+   "fieldname": "redirect_uri",
+   "fieldtype": "Data",
+   "label": "Redirect URI",
+   "reqd": 1,
+   "description": "Exact callback URL, e.g. http://site1.localhost:8000/passport/callback"
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1",
+   "in_list_view": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "actions": [],
+ "links": [],
+ "title_field": "title"
+}

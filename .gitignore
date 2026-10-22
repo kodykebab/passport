@@ -1,0 +1,23 @@
+.bench/
+.data/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Local planning history, reports and generated acceptance evidence.
+/docs/iteration-validation.md
+/docs/evidence/
+/docs/history/
+/docs/source-manifest.json
+/docs/prebuild/framework-baseline.md
+/docs/prebuild/framework-pin.json
+/docs/prebuild/cloud-directory-contract.md
+/docs/prebuild/session_probe.py
+/docs/prebuild/session-probe-results.json
+/tests/e2e.py

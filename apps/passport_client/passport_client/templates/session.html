@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Frappe ID</title>
+<h1>{{ title | e }}</h1>
+<p>{{ message | e }}</p>
+{% if csrf_token %}
+<form method="post" action="/passport/retry">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token | e }}">
+  <input type="hidden" name="response_format" value="html">
+  <button>Retry validation</button>
+</form>
+{% endif %}
+<p><a href="{{ link | e }}">{{ link_label | e }}</a></p>

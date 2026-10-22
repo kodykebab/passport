@@ -1,0 +1,6 @@
+redis_cache: redis-server config/redis_cache.conf
+redis_queue: redis-server config/redis_queue.conf
+web: bench serve --port 8080
+socketio: bench socketio
+schedule: bench schedule
+worker: OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES NO_PROXY=* bench worker

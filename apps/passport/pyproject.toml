@@ -1,0 +1,12 @@
+[project]
+name = "passport"
+authors = [{ name = "Frappe", email = "developers@frappe.io" }]
+description = "Passport"
+requires-python = ">=3.14"
+readme = "README.md"
+dynamic = ["version"]
+dependencies = ["passport_core>=0.1.0", "requests>=2.32,<3"]
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"

@@ -1,0 +1,196 @@
+diff --git a/frappe/app.py b/frappe/app.py
+index 7f4e4bc..22eb09b 100644
+--- a/frappe/app.py
++++ b/frappe/app.py
+@@ -103,7 +103,16 @@ def application(request: Request):
+ 
+ 		validate_auth()
+ 
+-		if request.method == "OPTIONS":
++		custom_response = None
++		for hook in frappe.get_hooks("protocol_response"):
++			custom_response = frappe.call(hook)
++			if custom_response is not None:
++				break
++
++		if custom_response is not None:
++			response = custom_response
++
++		elif request.method == "OPTIONS":
+ 			response = Response()
+ 
+ 		elif frappe.form_dict.cmd:
+@@ -202,6 +211,9 @@ def init_request(request):
+ 		request.max_content_length = cint(frappe.local.conf.get("max_file_size")) or 25 * 1024 * 1024
+ 	make_form_dict(request)
+ 
++	for hook in frappe.get_hooks("before_authentication"):
++		frappe.call(hook)
++
+ 	if request.method != "OPTIONS":
+ 		frappe.local.http_request = HTTPRequest()
+ 
+diff --git a/frappe/realtime.py b/frappe/realtime.py
+index 7e8e31f..40f7724 100644
+--- a/frappe/realtime.py
++++ b/frappe/realtime.py
+@@ -149,7 +149,13 @@ def get_user_info():
+ 	# For requests with Bearer tokens, user_type is not set in the session data
+ 	if not user_type:
+ 		user_type = frappe.get_cached_value("User", frappe.session.user, "user_type")
++	deadline = None
++	for hook in frappe.get_hooks("realtime_session_deadline"):
++		value = frappe.call(hook)
++		if value is not None:
++			deadline = value if deadline is None else min(deadline, value)
+ 	return {
++		"passport_ttl": deadline,
+ 		"user": frappe.session.user,
+ 		"user_type": user_type,
+ 		"installed_apps": frappe.get_installed_apps(),
+diff --git a/frappe/sessions.py b/frappe/sessions.py
+index e87e6b5..23f1535 100644
+--- a/frappe/sessions.py
++++ b/frappe/sessions.py
+@@ -94,6 +94,12 @@ def delete_session(sid=None, user=None, reason="Session Expired"):
+ 		if user_details:
+ 			user = user_details[0].get("user")
+ 
++	if user:
++		frappe.db.sql("SELECT name FROM tabUser WHERE name=%s FOR UPDATE", user)
++	frappe.db.sql("SELECT sid FROM tabSessions WHERE sid=%s FOR UPDATE", sid)
++	for hook in frappe.get_hooks("before_native_session_delete"):
++		frappe.call(hook, sid=sid, user=user)
++
+ 	logout_feed(user, reason)
+ 	frappe.db.delete("Sessions", {"sid": sid})
+ 	frappe.db.commit(chain=True)
+@@ -277,6 +283,15 @@ class Session:
+ 				}
+ 			)
+ 
++		if self.user != "Guest":
++			# Match deletion, activity updates and federation authority mutations.
++			enabled = frappe.db.sql("SELECT enabled FROM tabUser WHERE name=%s FOR UPDATE", self.user)
++			if not enabled or not enabled[0][0]:
++				frappe.throw(_("User is disabled"), frappe.AuthenticationError)
++
++		for hook in frappe.get_hooks("before_native_session_insert"):
++			frappe.call(hook, session=self)
++
+ 		# insert session
+ 		if self.user != "Guest":
+ 			self.insert_session_record()
+@@ -354,6 +369,9 @@ class Session:
+ 		if not data:
+ 			self._update_in_cache = True
+ 			data = self.get_session_data_from_db()
++		for hook in frappe.get_hooks("validate_native_session"):
++			if frappe.call(hook, sid=self.sid, data=data) is False:
++				return None
+ 		return data
+ 
+ 	def get_session_data_from_cache(self):
+@@ -390,6 +408,9 @@ class Session:
+ 		if record:
+ 			data = frappe.parse_json(record[0][1] or "{}")
+ 			data.user = record[0][0]
++			if (end := data.get("session_end")) and datetime.now(tz=UTC) >= datetime.fromisoformat(end):
++				self._delete_session()
++				return None
+ 		else:
+ 			self._delete_session()
+ 			data = None
+@@ -407,7 +428,7 @@ class Session:
+ 	def update(self, force=False):
+ 		"""extend session expiry"""
+ 
+-		if frappe.session.user == "Guest":
++		if frappe.session.user == "Guest" or frappe.flags.get("passport_background"):
+ 			return
+ 
+ 		now = frappe.utils.now_datetime()
+@@ -423,6 +444,11 @@ class Session:
+ 		if (
+ 			force or (time_diff is None) or (time_diff > threshold) or self._update_in_cache
+ 		) and not frappe.flags.read_only:
++			# User -> native session, also when invoked after the HTTP response.
++			enabled = frappe.db.sql("SELECT enabled FROM tabUser WHERE name=%s FOR UPDATE", self.user)
++			current = frappe.db.sql("SELECT user FROM tabSessions WHERE sid=%s FOR UPDATE", self.sid)
++			if not enabled or not enabled[0][0] or not current or current[0][0] != self.user:
++				return False
+ 			self.data.data.last_updated = now
+ 			self.data.data.lang = str(frappe.lang)
+ 			self.data.data.session_ip = frappe.local.request_ip
+diff --git a/realtime/index.js b/realtime/index.js
+index f333710..8ce41d3 100644
+--- a/realtime/index.js
++++ b/realtime/index.js
+@@ -28,6 +28,13 @@ realtime.use(authenticate);
+ // =======================
+ 
+ function on_connection(socket) {
++	if (socket.passport_permitted) {
++		const write = socket.client.writeToEngine.bind(socket.client);
++		socket.client.writeToEngine = (...args) => {
++			if (socket.passport_permitted()) return write(...args);
++			// Drop packets after expiry; the deadline timer closes the transport.
++		};
++	}
+ 	socket.installed_apps.forEach((app) => {
+ 		let app_handler = get_app_handlers(app);
+ 		try {
+diff --git a/realtime/middlewares/authenticate.js b/realtime/middlewares/authenticate.js
+index e2c9d57..0af1f80 100644
+--- a/realtime/middlewares/authenticate.js
++++ b/realtime/middlewares/authenticate.js
+@@ -1,4 +1,5 @@
+ const cookie = require("cookie");
++const { performance } = require("node:perf_hooks");
+ const { get_conf, get_redis_subscriber } = require("../../node_utils");
+ const { get_url } = require("../utils");
+ const conf = get_conf();
+@@ -16,6 +17,7 @@ function authenticate_with_frappe(socket, next) {
+ 
+ 	if (namespace != get_site_name(socket)) {
+ 		next(new Error("Invalid namespace"));
++		return;
+ 	}
+ 
+ 	if (get_hostname(socket.request.headers.host) != get_hostname(socket.request.headers.origin)) {
+@@ -64,6 +66,7 @@ function authenticate_with_frappe(socket, next) {
+ 		});
+ 	};
+ 
++	const authStarted = performance.now();
+ 	socket
+ 		.frappe_request("/api/method/frappe.realtime.get_user_info")
+ 		.then((res) => res.json())
+@@ -76,6 +79,27 @@ function authenticate_with_frappe(socket, next) {
+ 				message = retry_data.message;
+ 			}
+ 
++			if (message.passport_ttl != null) {
++				let deadline = authStarted + Math.max(0, message.passport_ttl * 1000);
++				const permitted = () => performance.now() < deadline;
++				socket.passport_permitted = permitted;
++				let timer = setTimeout(() => socket.disconnect(true), Math.max(0, deadline - performance.now()));
++				const emit = socket.emit.bind(socket);
++				socket.emit = (...args) => { if (permitted()) return emit(...args); socket.disconnect(true); };
++				socket.use((packet, done) => permitted() ? done() : socket.disconnect(true));
++				const interval = setInterval(async () => {
++					try {
++						const checkStarted = performance.now();
++						const res = await socket.frappe_request("/api/method/frappe.realtime.get_user_info", {}, {signal: AbortSignal.timeout(5000)});
++						const {message: state} = await res.json();
++						if (!res.ok || !state || state.user !== socket.user || state.passport_ttl == null || !permitted()) return socket.disconnect(true);
++						deadline = checkStarted + Math.max(0, state.passport_ttl * 1000);
++						clearTimeout(timer);
++						timer = setTimeout(() => socket.disconnect(true), Math.max(0, deadline - performance.now()));
++					} catch (_) { socket.disconnect(true); }
++				}, 10000);
++				socket.on("disconnect", () => { clearTimeout(timer); clearInterval(interval); });
++			}
+ 			socket.user = message.user;
+ 			socket.user_type = message.user_type;
+ 			socket.installed_apps = message.installed_apps || [];
