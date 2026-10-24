@@ -12,7 +12,7 @@ from werkzeug.exceptions import BadRequest
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
-from passport import protocol, store
+from passport import consent, protocol, store
 
 
 def issuer():
@@ -129,12 +129,16 @@ def authenticate():
 def authorize():
 	a = frappe.request.args
 	client = frappe.db.get_value(
-		"Passport Client", {"name": a.get("client_id"), "enabled": 1}, ["name", "redirect_uri"], as_dict=True
+		"Passport Client",
+		{"name": a.get("client_id"), "enabled": 1},
+		["name", "redirect_uri", "title"],
+		as_dict=True,
 	)
 	if not client or a.get("redirect_uri") != client.redirect_uri:
 		return json_response(400, {"error": "invalid_request"})
 	if (
-		a.get("response_type") != "code"
+		a.get("passport_action", "login") not in ("login", "link")
+		or a.get("response_type") != "code"
 		or a.get("code_challenge_method") != "S256"
 		or not all(a.get(k) for k in ("nonce", "state", "code_challenge"))
 	):
@@ -146,12 +150,19 @@ def authorize():
 	native = store.get_valid_native_session(frappe.session.sid, frappe.session.user, lock=True)
 	if not native:
 		return json_response(403, {"error": "login_revoked"})
+	if a.get("passport_action") == "link":
+		return consent.page(client, a)
+	return issue_grant(client, a)
+
+
+def issue_grant(client, a, action="login"):
 	code = secrets.token_urlsafe(32)
 	store.create(
 		"grant",
 		protocol.digest(code.encode()),
 		{
 			"client": client.name,
+			"action": action,
 			"redirect_uri": client.redirect_uri,
 			"user": frappe.session.user,
 			"sub": get_subject(frappe.session.user),
@@ -187,7 +198,10 @@ def token(client, body):
 	sid = secrets.token_hex(24)
 	grant["spent"] = True
 	store.put("grant", key, grant)
-	store.create("login", sid, {**grant, "deadline": deadline, "pending_until": now + 120, "revoked": False})
+	if grant.get("action", "login") == "login":
+		store.create(
+			"login", sid, {**grant, "deadline": deadline, "pending_until": now + 120, "revoked": False}
+		)
 	user = frappe.db.get_value("User", grant["user"], ["email", "full_name"], as_dict=True)
 	claims = {
 		"iss": issuer(),
@@ -204,7 +218,8 @@ def token(client, body):
 		"auth_time": native.get("passport_auth_time"),
 		"issuer_session_expires_at": deadline,
 	}
-	return {"id_token": signing(claims, "passport-id+jwt")}
+	purpose = "passport-link+jwt" if grant.get("action") == "link" else "passport-id+jwt"
+	return {"id_token": signing(claims, purpose)}
 
 
 def lease(client, body):
@@ -246,6 +261,7 @@ ROUTES = {
 	"/.well-known/openid-configuration": ("GET", discovery),
 	"/passport/jwks": ("GET", jwks),
 	"/oidc/authorize": ("GET", authorize),
+	consent.PATH: ("POST", consent.submit),
 	**{p: ("POST", None) for p in BACKCHANNEL},
 }
 

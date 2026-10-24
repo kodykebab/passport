@@ -27,8 +27,9 @@ def boundary():
 
 
 def insert(session):
-	if pending := frappe.flags.get("passport_pending"):
+	if session.user != "Guest":
 		session.data.data.passport_generation = store.generation(session.user, lock=True)
+	if pending := frappe.flags.get("passport_pending"):
 		session.data.data.passport = True
 		store.create("federation", session.sid, pending)
 

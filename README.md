@@ -81,3 +81,9 @@ This repository contains source, contracts and test code. Local environment stat
 The [issuer-signup iteration](docs/prebuild/signup-contract.md) adds opt-in registration at `/passport/signup`. It creates only a verified issuer identity, never client-site access. `passport_allow_signup` defaults off; native Frappe registration remains disabled. Development mail capture is not proof of real mailbox ownership.
 
 The signup integration test uses dedicated `example.invalid` issuer accounts, overrides eligibility only inside its test process, suppresses mail/background jobs and removes its fixtures. It does not enable the public signup switch or replace mail/browser acceptance. Native Frappe registration must remain disabled when enabling Frappe ID signup; the two entry points are intentionally separate.
+
+## Link an existing site account
+
+Sites may opt into password-verified linking with `passport_allow_linking`; it defaults off. Users open `/passport/link` (or **Link Frappe ID** in the local Desk menu), sign in with their native site account, confirm that site's password, then approve the chosen Frappe ID on the issuer. No administrator approval is needed for this flow. Native MFA or disabled password login prevents linking through this password-only interface.
+
+Linking creates only the identity mapping for an existing enabled site user. It never matches by email, creates site accounts, changes roles/names or replaces existing links. The current local session stays local; Frappe ID can be used on the next login. Cancellation, expired requests and session changes fail closed. See the [account-linking contract](docs/prebuild/account-linking-contract.md). Manually provisioned links and ordinary login remain supported.

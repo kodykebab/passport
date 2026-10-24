@@ -41,6 +41,13 @@
 		else if (remaining <= 75) validate();
 	}, 15000);
 	$(document).on('desktop_screen', (_event, {desktop}) => {
+		if (!frappe.boot?.passport && frappe.boot?.passport_link_url) {
+			desktop.add_menu_item({
+				label: 'Link Frappe ID',
+				url: frappe.boot.passport_link_url,
+				icon: 'user',
+			});
+		}
 		if (frappe.boot?.passport) {
 			desktop.add_menu_item({
 				label: 'Frappe ID account',

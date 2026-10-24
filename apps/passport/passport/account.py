@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import frappe
 from frappe.sessions import delete_session, get_csrf_token
-from frappe.utils.password import check_password
+from passport_core.password import confirm_password
 from passport_core.ui import render_page
 from werkzeug.exceptions import Forbidden
 from werkzeug.utils import redirect
@@ -41,23 +41,6 @@ def validate_session(sid, data):
 	if not store.get_valid_native_session(sid, data.get("user")):
 		delete_session(sid, user=data.get("user"), reason="Frappe ID session ended")
 		return False
-
-
-def confirm_password(user, password):
-	"""Use native lockout policy, but never resolve a submitted account or OTP."""
-	from frappe.auth import MAX_PASSWORD_SIZE, get_login_attempt_tracker
-
-	trackers = [get_login_attempt_tracker(user), get_login_attempt_tracker(frappe.local.request_ip)]
-	try:
-		if not isinstance(password, str) or not password or len(password) > MAX_PASSWORD_SIZE:
-			raise frappe.AuthenticationError("Incorrect User or Password")
-		check_password(user, password, delete_tracker_cache=False)
-	except frappe.AuthenticationError:
-		for tracker in trackers:
-			tracker.add_failure_attempt()
-		raise
-	for tracker in trackers:
-		tracker.add_success_attempt()
 
 
 def response():

@@ -336,3 +336,30 @@ test("signup verification submits credentials with its own request binding at 37
     },
   });
 });
+
+test("linking requires a site password and preserves CSRF binding", async ({ page }) => {
+  await render(page, { page: "link", title: "Link your Frappe ID", user: "local@example.test", csrf_token: "link-csrf", linked: false });
+  await expect(page.getByLabel("Site account", { exact: true })).toHaveAttribute("readonly", "");
+  await page.getByLabel(/^Confirm your site password/).fill("fixture-password");
+  const request = page.waitForRequest(r => r.method() === "POST");
+  await page.getByLabel(/^Confirm your site password/).press("Enter");
+  const sent = await request;
+  expect(new URL(sent.url()).pathname).toBe("/passport/link");
+  const fields = new URLSearchParams(sent.postData());
+  expect(fields.get("csrf_token")).toBe("link-csrf");
+  expect(fields.get("password")).toBe("fixture-password");
+});
+
+test("link consent shows the site and identity and submits explicit cancellation", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await render(page, { page: "consent", title: "Link your Frappe ID", client_title: "Example Site", origin: "https://site.example", profile: { email: "issuer@example.test", full_name: "Issuer Name" }, csrf_token: "consent-csrf", request_id: "request" });
+  await expect(page.getByLabel("Site", { exact: true })).toHaveValue("https://site.example");
+  await expect(page.getByLabel("Frappe ID email", { exact: true })).toHaveValue("issuer@example.test");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  const request = page.waitForRequest(r => r.method() === "POST");
+  await page.getByRole("button", { name: "Cancel linking", exact: true }).click();
+  const fields = new URLSearchParams((await request).postData());
+  expect(fields.get("decision")).toBe("cancel");
+  expect(fields.get("request_id")).toBe("request");
+  expect(fields.get("csrf_token")).toBe("consent-csrf");
+});

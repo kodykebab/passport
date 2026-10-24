@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 import frappe
 from passport import account
 from passport_client import federation
+from passport_core import password as password_confirmation
 from werkzeug.exceptions import Forbidden
 from werkzeug.wrappers import Response
 
@@ -51,7 +52,7 @@ class PasswordTests(unittest.TestCase):
 		self.addCleanup(self.tracking.stop)
 
 	def test_failure_counts_both_trackers(self):
-		with patch.object(account, "check_password", side_effect=frappe.AuthenticationError):
+		with patch.object(password_confirmation, "check_password", side_effect=frappe.AuthenticationError):
 			with self.assertRaises(frappe.AuthenticationError):
 				account.confirm_password("alice@example.com", "wrong")
 		self.user_tracker.add_failure_attempt.assert_called_once()
@@ -59,13 +60,13 @@ class PasswordTests(unittest.TestCase):
 
 	def test_lockout_happens_before_password_check(self):
 		self.get_tracker.side_effect = frappe.SecurityException
-		with patch.object(account, "check_password") as verify:
+		with patch.object(password_confirmation, "check_password") as verify:
 			with self.assertRaises(frappe.SecurityException):
 				account.confirm_password("alice@example.com", "correct")
 			verify.assert_not_called()
 
 	def test_success_is_bound_to_current_user_and_resets_trackers(self):
-		with patch.object(account, "check_password") as verify:
+		with patch.object(password_confirmation, "check_password") as verify:
 			account.confirm_password("alice@example.com", "correct")
 			verify.assert_called_once_with("alice@example.com", "correct", delete_tracker_cache=False)
 		self.user_tracker.add_success_attempt.assert_called_once()
@@ -74,7 +75,7 @@ class PasswordTests(unittest.TestCase):
 	def test_empty_and_oversized_passwords_count_as_failures(self):
 		for password in ("", "x" * 513):
 			self.get_tracker.side_effect = [self.user_tracker, self.ip_tracker]
-			with patch.object(account, "check_password") as verify:
+			with patch.object(password_confirmation, "check_password") as verify:
 				with self.assertRaises(frappe.AuthenticationError):
 					account.confirm_password("alice@example.com", password)
 				verify.assert_not_called()

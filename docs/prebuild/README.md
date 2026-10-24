@@ -7,3 +7,5 @@ The [login and lease contract](login-and-lease-contract.md) governs this slice. 
 The [email-login contract](email-login-contract.md) adds code login for existing issuer users. Account actions retain fresh-password confirmation.
 
 The [signup contract](signup-contract.md) adds opt-in verified issuer registration without client-site provisioning.
+
+The [account-linking contract](account-linking-contract.md) adds opt-in linking of existing site accounts after fresh site-password verification and explicit issuer consent.

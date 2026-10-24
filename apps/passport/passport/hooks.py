@@ -18,5 +18,5 @@ website_user_home_page = "account"
 
 validate_native_session = ["passport.account.validate_session"]
 
-scheduler_events = {"hourly": ["passport.email_login.cleanup"]}
+scheduler_events = {"hourly": ["passport.email_login.cleanup", "passport.consent.cleanup"]}
 persistent_cache_keys = ["passport:email-limit:"]

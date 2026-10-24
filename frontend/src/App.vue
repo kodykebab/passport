@@ -4,6 +4,8 @@ import { Alert, FrappeUIProvider } from "frappe-ui";
 import PasswordLogin from "./PasswordLogin.vue";
 import EmailLogin from "./EmailLogin.vue";
 import AccountPage from "./AccountPage.vue";
+import AccountLink from "./AccountLink.vue";
+import LinkConsent from "./LinkConsent.vue";
 import SessionRecovery from "./SessionRecovery.vue";
 const { data } = defineProps({ data: Object });
 onMounted(() =>
@@ -49,6 +51,8 @@ const title = computed(() =>
             :signup-url="data.signup_url"
           />
           <EmailLogin v-else-if="data.page === 'email'" :data="data" />
+          <AccountLink v-else-if="data.page === 'link'" :data="data" />
+          <LinkConsent v-else-if="data.page === 'consent'" :data="data" />
           <SessionRecovery v-else :data="data" />
         </div>
       </div>

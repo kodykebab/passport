@@ -91,12 +91,18 @@ def login():
 		raise PassportError("Frappe ID is not configured.")
 	if frappe.session.user != "Guest":
 		return redirect(safe_redirect(frappe.request.args.get("redirect-to")))
+	return start_authorization()
+
+
+def start_authorization(context=None):
+	c = config()
 	state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
 	browser = frappe.request.cookies.get("passport_browser") or secrets.token_urlsafe(32)
 	store.create(
 		"attempt",
 		protocol.digest(state.encode()),
 		{
+			**(context or {}),
 			"nonce": nonce,
 			"verifier": verifier,
 			"browser": protocol.digest(browser.encode()),
@@ -115,6 +121,8 @@ def login():
 		"code_challenge": protocol.pkce_challenge(verifier),
 		"code_challenge_method": "S256",
 	}
+	if context and context.get("action") == "link":
+		query["passport_action"] = "link"
 	r = redirect(c.issuer + "/oidc/authorize?" + urlencode(query))
 	r.set_cookie(
 		"passport_browser",
@@ -140,8 +148,6 @@ def resolve_user(issuer, claims):
 
 
 def callback():
-	if frappe.session.user != "Guest":
-		raise PassportError("A local session is already active. Log out before starting another login.")
 	key = protocol.digest(frappe.request.args.get("state", "").encode())
 	attempt = store.get("attempt", key, lock=True)
 	browser = protocol.digest(frappe.request.cookies.get("passport_browser", "").encode())
@@ -152,9 +158,19 @@ def callback():
 		or not hmac.compare_digest(attempt["browser"], browser)
 	):
 		raise PassportError("This login attempt has expired or belongs to another browser.")
+	linking = attempt.get("action") == "link"
+	if linking:
+		if frappe.session.user != attempt["user"] or frappe.session.sid != attempt["local_sid"]:
+			raise PassportError("The local session changed. Start linking again.")
+	elif frappe.session.user != "Guest":
+		raise PassportError("A local session is already active. Log out before starting another login.")
 	attempt["spent"] = True
 	store.put("attempt", key, attempt)
 	frappe.db.commit()
+	if frappe.request.args.get("error"):
+		raise PassportError(
+			"Linking was cancelled. No account link was created." if linking else "Sign-in was cancelled."
+		)
 	c = config()
 	result = call(
 		"/oidc/token",
@@ -166,7 +182,7 @@ def callback():
 	)
 	claims = verify(
 		result["id_token"],
-		"passport-id+jwt",
+		"passport-link+jwt" if linking else "passport-id+jwt",
 		["sub", "sid", "nonce", "auth_time", "amr", "passport_auth_method", "issuer_session_expires_at"],
 	)
 	if (
@@ -176,6 +192,10 @@ def callback():
 		or claims["exp"] - claims["iat"] > 60
 	):
 		raise PassportError("Invalid login evidence.")
+	if linking:
+		from passport_client.linking import finish
+
+		return finish(attempt, claims)
 	user = resolve_user(c.issuer, claims)
 	binding = secrets.token_hex(24)
 	deadline = claims["issuer_session_expires_at"]
@@ -227,11 +247,26 @@ def session_page(title, message, link, link_label, *, status=200, csrf_token=Non
 
 def response():
 	path = frappe.request.path
-	if path not in ("/passport/login", "/passport/callback", "/passport/retry", "/passport/status"):
+	if path not in (
+		"/passport/login",
+		"/passport/callback",
+		"/passport/retry",
+		"/passport/status",
+		"/passport/link",
+	):
 		return None
-	if frappe.request.method != ("POST" if path == "/passport/retry" else "GET"):
+	if frappe.request.method not in (
+		("GET", "POST") if path == "/passport/link" else ("POST" if path == "/passport/retry" else "GET",)
+	):
 		return Response(status=405)
 	try:
+		if path == "/passport/link":
+			from passport_client.linking import response as link_response
+
+			result = link_response()
+			result.headers["Cache-Control"] = "no-store"
+			result.headers["Referrer-Policy"] = "no-referrer"
+			return result
 		if path == "/passport/status":
 			from frappe.sessions import get_csrf_token
 
@@ -287,6 +322,8 @@ def update_login_context(context):
 
 
 def extend_bootinfo(bootinfo):
+	if frappe.conf.get("passport_allow_linking"):
+		bootinfo.passport_link_url = "/passport/link"
 	row = store.get("federation", frappe.session.sid)
 	if row and not row["revoked"]:
 		bootinfo.passport = {
