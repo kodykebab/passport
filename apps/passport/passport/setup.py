@@ -52,3 +52,13 @@ def provision_iteration():
 		json.dumps(public_jwk(config["passport_private_key"], config["passport_key_id"])),
 		config["host_name"],
 	)
+
+
+def provision_email_login():
+	"""Enable email challenges without changing the site's mail provider or sender."""
+	import secrets
+
+	from frappe.installer import update_site_config
+
+	if not frappe.conf.get("passport_email_code_key"):
+		update_site_config("passport_email_code_key", secrets.token_hex(32))

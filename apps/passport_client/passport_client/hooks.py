@@ -12,7 +12,7 @@ before_native_session_delete = ["passport_client.federation.deleted"]
 validate_native_session = ["passport_client.federation.validate"]
 realtime_session_deadline = ["passport_client.federation.socket_context"]
 update_website_context = ["passport_client.auth.update_login_context"]
-app_include_js = ["/assets/passport_client/js/passport_desk.js"]
+app_include_js = ["passport_desk.bundle.js"]
 doc_events = {"User": {"on_update": "passport_client.federation.user_changed"}}
 
 extend_bootinfo = ["passport_client.auth.extend_bootinfo"]

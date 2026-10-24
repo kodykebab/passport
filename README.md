@@ -2,13 +2,13 @@
 
 Code and repository naming remain `passport`. See the [active scope](docs/architecture-and-plan.md) and [login/lease contract](docs/prebuild/login-and-lease-contract.md).
 
-Keep the existing bench and Frappe development commit `4dc04fac4dd5bf20feb9f24e029202b3eadb52b8`. This iteration targets `id.localhost:8080` and `site1.localhost:8080`; the existing second site remains outside validation scope. Do not create a fresh bench or upgrade to v16.
+Keep the existing Mac bench and Frappe development commit `4dc04fac4dd5bf20feb9f24e029202b3eadb52b8`. A separate Ubuntu development bench uses the same commit and framework patch. This iteration targets `id.localhost:8080` and `site1.localhost:8080`; the existing second site remains outside validation scope. Do not upgrade to v16 or replace the Mac environment.
 
 Run the existing services with `env/start.sh`. Demo issuer login remains `alice@example.com` / `alice-passport-1`; admin password remains `admin`. Preserve seeded accounts and manually provision identity links and keys. Site users, roles, names and admission remain site-owned.
 
 Implementation sequence: Ed25519 issuer/client authentication and discovery/JWKS; durable native-session-bound five-minute leases across HTTP/realtime; small account page with display-name edits, read-only email and browser-session logout. This is a development PoC, not production readiness.
 
-Email codes, signup, automatic site-user creation, consent/linking screens, email changes/deletion, Cloud integration, notifications and clone/restore orchestration are deferred.
+Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Signup, automatic site-user creation, consent/linking screens, email changes/deletion, Cloud integration, notifications and clone/restore orchestration are deferred.
 
 ## Run and validate this iteration
 
@@ -16,8 +16,43 @@ Start services with `env/start.sh`. In another terminal, run `env/setup.sh` to m
 
 Open `http://site1.localhost:8080/passport/login`. Manage the issuer profile and browser sessions at `http://id.localhost:8080/account`. After lease expiry, use `/passport/status` on the client to explicitly validate and then return to the site. Interrupted actions are never replayed.
 
+## Custom interfaces
+
+The public password-login, email-code, account and session-recovery pages use official `frappe-ui` 1.0.2 with Vue 3. The standalone frontend build does not change Frappe's dependencies or require a Desk session. The issuer password screen calls native Frappe authentication, preserving its password policy and throttling. Native Desk UI remains framework-owned. The PoC supports the existing password-only accounts; additional native authentication steps are not implemented by this screen and fail closed.
+
+Build with Node 20.19+ (the Ubuntu environment uses Node 24):
+
+```sh
+npm ci --prefix frontend
+npm run build --prefix frontend
+cd .bench
+bench build --app passport_client
+```
+
+Build before serving the custom pages. Vite copies fingerprinted assets and a manifest into both apps' public directories; generated assets are ignored. The Desk notice uses the same components inside a shadow root to isolate its styles. Its small integration script uses Frappe's fingerprinted bundle pipeline. On deployment, retain older fingerprinted assets until existing pages have finished loading.
+
+Rendered form regressions run with `npm test --prefix frontend` after `npx --prefix frontend playwright install chromium`. They use synthetic page data and do not replace live browser acceptance.
+
+The client must have completed Frappe's normal setup lifecycle before non-admin users enter Desk. Run standard setup as Administrator with the intended regional settings. Do not grant setup permissions to federated users or directly flip setup flags.
+
+## Email login
+
+Passport uses `frappe.sendmail`, the native Email Queue and the issuer's configured email service. Configure an outgoing Email Account or Frappe Cloud's Email Delivery Service on the issuer, then run `bench --site <issuer> execute passport.setup.provision_email_login` from the bench directory. This only creates the challenge digest key if missing; it does not configure a provider or change signing keys. `passport_email_sender` is an optional sender override; otherwise Frappe selects its configured outgoing account.
+
+Delivery runs after the challenge transaction commits. The native queue owns transport, retries and delivery-status records. Passport cleanup removes expired challenges while retaining queue records for late provider callbacks; configure mail retention through Frappe's Log Settings and the provider.
+
+### Local mail capture
+
+For local testing, run Mailpit bound to loopback (`127.0.0.1:1025` for SMTP and `127.0.0.1:8025` for its inbox), with captured mail stored outside version control. Configure a native outgoing Email Account on the issuer to use that SMTP endpoint without TLS or authentication. Use a development-only sender and the provider-neutral provisioning command above. This configuration is only for local capture; deployments use their configured Frappe mail service.
+
+Choose **Use email code** on the issuer login page and retrieve the matching request identifier from the local inbox. Use the same browser to enter the code. Each tab has an independent attempt; resends replace the previous code. Issuance counters use Frappe's persistent-cache hook so ordinary site cache clearing preserves their limits and expiry. The [email-login contract](docs/prebuild/email-login-contract.md) defines expiry, limits and session behavior.
+
+## Regression tests
+
 ```sh
 .bench/env/bin/python -m unittest discover -s tests -p 'test_*.py'
+.bench/env/bin/python tests/email_challenge_integration.py
+.bench/env/bin/python tests/email_login_integration.py
 .bench/env/bin/python tests/login_integrity.py
 .bench/env/bin/python tests/iteration_e2e.py
 .bench/env/bin/python tests/client_auth_integration.py
@@ -27,11 +62,15 @@ Open `http://site1.localhost:8080/passport/login`. Manage the issuer profile and
 .bench/env/bin/python tests/realtime_integration.py
 .bench/env/bin/python tests/review_concurrency.py
 .bench/env/bin/python tests/review_recovery.py
-/opt/homebrew/opt/node@26/bin/node tests/desk_renewal.cjs
+node tests/desk_renewal.cjs
 ```
 
 For code checks, run `uv tool run ruff check apps tests env` and `uv tool run ruff format apps tests env --check`. Ruff runs outside the bench; it does not change its dependencies.
 
 The live tests use dedicated browser sessions of the seeded Alice identity. The account test logs out Alice's issuer sessions; the lease and recovery tests temporarily disable and restore Alice on site1 and the issuer. Run them as development tests, not against users' sessions.
+
+The email delivery test needs Mailpit and the bench worker running. It consumes normal email/IP request limits, so repeated runs may need to wait for their one-hour window. Challenge tests use isolated records and rate-limit keys; they do not create users or send mail.
+
+On the dedicated Ubuntu environment, `tests/email_delivery_integration.py --mailpit-pid PID` tests actual SMTP failure and recovery. Run it with the bench Python and the PID of this project's `.data/bin/mailpit` process. It deliberately stops and restarts that process, retries queued delivery after Frappe's undo window, checks rejection after controlled code expiry, and leaves Mailpit running. Do not run it during someone else's browser acceptance session.
 
 This repository contains source, contracts and test code. Local environment state, test reports, screenshots and historical investigation artifacts are not published. Setup expects the existing development bench and seeded sites; it is not a fresh-install bootstrap.

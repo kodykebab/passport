@@ -1,17 +1,21 @@
 // Validation never retries an application request or replays a write.
 (() => {
 	let busy = false;
-	function notice() {
+	let unmountNotice;
+	async function notice() {
 		if (document.getElementById('passport-blocked')) return;
 		const panel = document.createElement('div');
 		panel.id = 'passport-blocked';
-		panel.style = 'position:fixed;bottom:1rem;right:1rem;z-index:9999;background:white;padding:1rem;border:1px solid #aaa;max-width:26rem';
-		panel.textContent = 'Frappe ID validation is needed. Access stops at lease expiry. Interrupted actions will not be replayed. ';
-		const button = document.createElement('button');
-		button.textContent = 'Retry validation';
-		button.onclick = validate;
-		panel.append(button);
+		panel.style = 'position:fixed;bottom:1rem;right:1rem;left:1rem;margin-left:auto;z-index:9999;max-width:26rem';
 		document.body.append(panel);
+		try {
+			const {mountNotice} = await import(frappe.boot.passport.ui.script);
+			const unmount = await mountNotice(panel, validate, frappe.boot.passport.ui.style);
+			if (panel.isConnected) unmountNotice = unmount;
+			else unmount();
+		} catch (_) {
+			window.location.assign('/passport/status');
+		}
 	}
 	async function validate() {
 		if (busy) return;
@@ -23,6 +27,8 @@
 			if (!response.ok) throw new Error('Validation unavailable');
 			const result = await response.json();
 			frappe.boot.passport.expires = result.expires;
+			unmountNotice?.();
+			unmountNotice = null;
 			document.getElementById('passport-blocked')?.remove();
 			if (frappe.realtime?.socket && !frappe.realtime.socket.connected) frappe.realtime.socket.connect();
 		} catch (_) { notice(); }

@@ -1,38 +1,15 @@
 <!doctype html>
-<meta charset="utf-8">
-<title>Frappe ID account</title>
-<style>
-body { font: 16px system-ui; max-width: 48rem; margin: 3rem auto; padding: 1rem; }
-form { padding: 1rem; border: 1px solid #ddd; margin: 1rem 0; }
-label { display: block; margin: .7rem 0; }
-input { padding: .5rem; }
-button { padding: .5rem 1rem; }
-</style>
-{% macro credentials(action) %}
-<input type="hidden" name="csrf_token" value="{{ csrf_token | e }}">
-<input type="hidden" name="action" value="{{ action | e }}">
-<label>Password <input type="password" name="password" required autocomplete="current-password"></label>
-<button>Confirm</button>
-{% endmacro %}
-<h1>Frappe ID</h1>
-{% if error %}<p role="alert">{{ error | e }}</p>{% endif %}
-<p>Email (read-only): {{ profile.email | e }}</p>
-<form method="post">
-  <label>Display name <input name="display_name" maxlength="140" required value="{{ profile.full_name | e }}"></label>
-  {{ credentials("name") }}
-</form>
-<h2>Browser sessions</h2>
-<p>Device logout ends this issuer browser session and prevents renewal of its site sessions.
-Existing site leases expire within five minutes.</p>
-{% for session in sessions %}
-<form method="post">
-  <p>{{ session.user_agent | e }}{% if session.current %} (current){% endif %}</p>
-  <input type="hidden" name="device" value="{{ session.device | e }}">
-  <p>Log out this device</p>
-  {{ credentials("device") }}
-</form>
-{% endfor %}
-<form method="post">
-  <h2>Log out everywhere</h2>
-  {{ credentials("everywhere") }}
-</form>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Frappe ID account</title>
+  <link rel="stylesheet" href="{{ ui.style | e }}">
+</head>
+<body>
+  <div id="passport-ui"></div>
+  <noscript>Enable JavaScript to use Frappe ID.</noscript>
+  <script id="passport-data" type="application/json">{{ {'page': 'account', 'csrf_token': csrf_token, 'profile': profile, 'sessions': sessions, 'error': error} | tojson }}</script>
+  <script type="module" src="{{ ui.script | e }}"></script>
+</body>
+</html>

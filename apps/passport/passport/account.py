@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import frappe
 from frappe.sessions import delete_session, get_csrf_token
 from frappe.utils.password import check_password
+from passport_core.ui import assets
 from werkzeug.exceptions import Forbidden
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
@@ -21,8 +22,17 @@ def insert(session):
 	if session.data.data.get("session_end"):
 		end = min(end, datetime.fromisoformat(session.data.data.session_end))
 	session.data.data.session_end = end.isoformat()
-	session.data.data.passport_auth_time = int(time.time())
-	session.data.data.passport_generation = store.generation(session.user, lock=True)
+	generation = store.generation(session.user, lock=True)
+	context = frappe.flags.get("passport_email_auth")
+	if context and (
+		context["user"] != session.user
+		or context["generation"] != generation
+		or frappe.get_system_settings("enable_two_factor_auth")
+	):
+		raise frappe.AuthenticationError("Email login is no longer valid")
+	session.data.data.passport_auth_method = "email_code" if context else "password"
+	session.data.data.passport_auth_time = context["auth_time"] if context else int(time.time())
+	session.data.data.passport_generation = generation
 
 
 def validate_session(sid, data):
@@ -116,6 +126,7 @@ def account_page(user, *, error=None, status=200):
 	html = frappe.render_template(
 		"templates/account.html",
 		{
+			"ui": assets("passport"),
 			"csrf_token": get_csrf_token(),
 			"profile": profile,
 			"sessions": sessions,

@@ -4,7 +4,7 @@ Active scope, 20 October 2026. Product branding is **Frappe ID**; repository, ap
 
 ## Baseline and scope
 
-Keep the existing bench and Frappe development checkout at `4dc04fac4dd5bf20feb9f24e029202b3eadb52b8`. Do not upgrade to v16 or create a replacement bench. Inspect and test native HTTP/session/realtime integration on this checkout.
+Keep the existing Mac bench and Frappe development checkout at `4dc04fac4dd5bf20feb9f24e029202b3eadb52b8`. A separately provisioned Ubuntu development bench uses the same checkout and framework patch. Do not upgrade to v16 or replace the Mac bench. Inspect and test native HTTP/session/realtime integration on this checkout.
 
 Implement iteratively against `id.localhost` and `site1.localhost`. Keep the existing demo password authentication, seeded accounts, manual provisioning, identity links and site-owned admission. Leave the existing second site intact; broader multi-site validation is deferred.
 
@@ -18,4 +18,8 @@ Test real login and existing identity links; algorithm/key/audience/nonce and cl
 
 ## Later work
 
-Later work includes email codes, public signup, automatic site-account creation, consent/linking screens, email change, account deletion, Cloud directory/provisioning, notifications, clone/restore orchestration and wider multi-site validation. A framework upgrade or replacement bench is outside this iteration.
+Later work includes public signup, automatic site-account creation, consent/linking screens, email change, account deletion, Cloud directory/provisioning, notifications, clone/restore orchestration and wider multi-site validation. A framework upgrade or replacement bench is outside this iteration.
+
+## Email-login iteration
+
+Add email-code login for existing issuer accounts according to the [email-login contract](prebuild/email-login-contract.md). Retain password login, password confirmation for account mutations, existing identity links and site-owned admission. Use local email capture during development.

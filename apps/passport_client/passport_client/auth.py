@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 import frappe
 import jwt
 import requests
+from passport_core.ui import assets
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
@@ -166,9 +167,14 @@ def callback():
 	claims = verify(
 		result["id_token"],
 		"passport-id+jwt",
-		["sub", "sid", "nonce", "auth_time", "amr", "issuer_session_expires_at"],
+		["sub", "sid", "nonce", "auth_time", "amr", "passport_auth_method", "issuer_session_expires_at"],
 	)
-	if claims["nonce"] != attempt["nonce"] or claims["amr"] != ["pwd"] or claims["exp"] - claims["iat"] > 60:
+	if (
+		claims["nonce"] != attempt["nonce"]
+		or (claims["amr"], claims.get("passport_auth_method"))
+		not in ((["pwd"], "password"), (["otp"], "email_code"))
+		or claims["exp"] - claims["iat"] > 60
+	):
 		raise PassportError("Invalid login evidence.")
 	user = resolve_user(c.issuer, claims)
 	binding = secrets.token_hex(24)
@@ -207,6 +213,7 @@ def session_page(title, message, link, link_label, *, status=200, csrf_token=Non
 	html = frappe.render_template(
 		"templates/session.html",
 		{
+			"ui": assets("passport_client"),
 			"title": title,
 			"message": message,
 			"link": link,
@@ -281,4 +288,8 @@ def update_login_context(context):
 def extend_bootinfo(bootinfo):
 	row = store.get("federation", frappe.session.sid)
 	if row and not row["revoked"]:
-		bootinfo.passport = {"account_url": config().issuer + "/account", "expires": row["exp"]}
+		bootinfo.passport = {
+			"account_url": config().issuer + "/account",
+			"expires": row["exp"],
+			"ui": assets("passport_client"),
+		}

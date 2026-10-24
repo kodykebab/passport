@@ -199,7 +199,8 @@ def token(client, body):
 		"nonce": grant["nonce"],
 		"email": user.email,
 		"name": user.full_name,
-		"amr": ["pwd"],
+		"amr": ["otp"] if native.get("passport_auth_method") == "email_code" else ["pwd"],
+		"passport_auth_method": native.get("passport_auth_method", "password"),
 		"auth_time": native.get("passport_auth_time"),
 		"issuer_session_expires_at": deadline,
 	}

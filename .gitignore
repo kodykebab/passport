@@ -21,3 +21,11 @@ __pycache__/
 /docs/prebuild/session_probe.py
 /docs/prebuild/session-probe-results.json
 /tests/e2e.py
+
+# Reproducible frontend build outputs.
+frontend/node_modules/
+apps/passport/passport/public/ui/
+apps/passport_client/passport_client/public/ui/
+frontend/test-results/
+frontend/playwright-report/
+apps/passport_client/passport_client/public/dist/
