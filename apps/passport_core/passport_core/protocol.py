@@ -55,7 +55,7 @@ def verify(token, jwk, purpose, issuer, audience, required=()):
 	for part in token.split(".")[:2]:
 		json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)), object_pairs_hook=unique)
 	header = jwt.get_unverified_header(token)
-	if set(header) != {"alg", "typ", "kid"} or header != {"alg": "EdDSA", "typ": purpose, "kid": jwk["kid"]}:
+	if header != {"alg": "EdDSA", "typ": purpose, "kid": jwk["kid"]}:
 		raise ValueError("Invalid token header")
 	if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519":
 		raise ValueError("Invalid key")

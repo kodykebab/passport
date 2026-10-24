@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 import frappe
 import jwt
 import requests
-from passport_core.ui import assets
+from passport_core.ui import assets, render_page
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
@@ -210,10 +210,11 @@ def callback():
 
 
 def session_page(title, message, link, link_label, *, status=200, csrf_token=None):
-	html = frappe.render_template(
-		"templates/session.html",
+	html = render_page(
+		"passport_client",
+		"Frappe ID",
 		{
-			"ui": assets("passport_client"),
+			"page": "session",
 			"title": title,
 			"message": message,
 			"link": link,

@@ -3,18 +3,8 @@
 import time
 
 import frappe
-from frappe.sessions import delete_session
-from live_support import ID, SITE, USER, check, db, get, login, renew, store
+from live_support import ID, SITE, USER, BrowserSessions, check, db, get, renew, store
 from page_data import page_data
-
-sessions = []
-
-
-def new_login():
-	browser, csrf, sid = login()
-	sessions.append(("site1.localhost", sid))
-	sessions.append(("id.localhost", browser.cookies.get("sid", domain="id.localhost")))
-	return browser, csrf, sid
 
 
 def csrf_from(page):
@@ -28,8 +18,8 @@ def expire(sid):
 		store.put("federation", sid, row)
 
 
-try:
-	browser, csrf, sid = new_login()
+with BrowserSessions() as sessions:
+	browser, csrf, sid = sessions.login()
 	issuer_sid = browser.cookies.get("sid", domain="id.localhost")
 	page = browser.get(ID + "/account")
 	token = csrf_from(page)
@@ -102,11 +92,5 @@ try:
 		browser.post(SITE + "/api/method/logout", headers={"X-Frappe-CSRF-Token": csrf}).ok,
 	)
 	check("expired local logout removes access", not get(browser).ok)
-	fresh, _, _ = new_login()
+	fresh, _, _ = sessions.login()
 	check("fresh password login succeeds after expired logout", get(fresh).ok)
-finally:
-	for site, sid in sessions:
-		with db(site):
-			if frappe.db.exists("Sessions", {"sid": sid}):
-				delete_session(sid, user=USER, reason="Acceptance regression cleanup")
-print("PASS dedicated regression sessions cleaned up")

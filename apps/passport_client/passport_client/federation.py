@@ -41,10 +41,10 @@ def deleted(sid, user=None):
 		store.put("federation", sid, row)
 
 
-def local_valid(sid, row, lock=False):
+def get_valid_local_session(sid, row, lock=False):
 	if not row or row["revoked"] or row["deadline"] <= time.time():
 		return None
-	native = store.native(sid, row["user"], lock=lock)
+	native = store.get_valid_native_session(sid, row["user"], lock=lock)
 	if not native or not native.get("passport"):
 		return None
 	if frappe.conf.get("passport_disabled") or not frappe.db.exists(
@@ -63,7 +63,7 @@ def validate(sid, data):
 			return
 	if frappe.request.path == "/api/method/logout":
 		return
-	if not local_valid(sid, row):
+	if not get_valid_local_session(sid, row):
 		# Terminal native/identity state must reach Frappe's cookie clearing and
 		# Guest fallback. Only an expired lease retains a resumable session.
 		if data:
@@ -96,7 +96,7 @@ def renew(complete=False):
 
 	sid = frappe.session.sid
 	row = store.get("federation", sid)
-	if not local_valid(sid, row):
+	if not get_valid_local_session(sid, row):
 		raise PassportError("This local session is no longer valid.")
 	revision = row["revision"]
 	operation = secrets.token_hex(24)
@@ -116,7 +116,7 @@ def renew(complete=False):
 	):
 		raise PassportError("Invalid lease.")
 	# Lock User then native then federation, matching disablement/deletion ordering.
-	if not local_valid(sid, row, lock=True):
+	if not get_valid_local_session(sid, row, lock=True):
 		raise PassportError("This local session ended during validation.")
 	current = store.get("federation", sid, lock=True)
 	if (
@@ -137,7 +137,7 @@ def socket_context():
 	row = store.get("federation", frappe.session.sid)
 	if not row:
 		return None
-	native = local_valid(frappe.session.sid, row)
+	native = get_valid_local_session(frappe.session.sid, row)
 	if not native:
 		raise Forbidden()
 	return max(0, min(row["exp"] - time.time(), row["deadline"] - time.time(), native["idle_remaining"]))

@@ -35,12 +35,11 @@ class PasswordPageTests(unittest.TestCase):
 		frappe.request.args = {"redirect-to": destination}
 		frappe.conf.passport_email_code_key = "configured"
 		with (
-			patch.object(login, "assets", return_value={}),
 			patch.object(frappe, "get_system_settings", return_value=True),
-			patch.object(frappe, "render_template", return_value="page") as render,
+			patch.object(login, "render_page", return_value="page") as render,
 		):
 			response = login.response()
-			data = render.call_args.args[1]
+			data = render.call_args.args[2]
 			self.assertFalse(data["password_enabled"])
 			self.assertEqual(data["destination"], destination)
 			self.assertTrue(data["email_url"].startswith("/passport/email?redirect-to="))

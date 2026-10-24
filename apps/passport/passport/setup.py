@@ -1,22 +1,4 @@
 import frappe
-from frappe.utils.password import update_password
-
-
-def create_demo_user(email: str, password: str):
-	if not frappe.db.exists("User", email):
-		user = frappe.get_doc(
-			{
-				"doctype": "User",
-				"email": email,
-				"first_name": email.split("@")[0].title(),
-				"user_type": "Website User",
-				"send_welcome_email": 0,
-			}
-		)
-		user.flags.no_welcome_mail = True
-		user.insert(ignore_permissions=True)
-	update_password(email, password)
-	frappe.db.commit()
 
 
 def register_client(client_id: str, title: str, public_jwk: str, home_url: str):

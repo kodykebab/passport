@@ -8,7 +8,7 @@ import time
 from urllib.parse import urlencode, urlsplit
 
 import frappe
-from passport_core.ui import assets
+from passport_core.ui import render_page
 from werkzeug.exceptions import BadRequest
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
@@ -310,13 +310,14 @@ def page(attempt, browser, *, error=None, status=200):
 		row = None
 	destination = return_path(row["return"] if row else frappe.request.args.get("redirect-to"))
 	return Response(
-		frappe.render_template(
-			"templates/email_login.html",
+		render_page(
+			"passport",
+			"Sign in to Frappe ID",
 			{
-				"ui": assets("passport"),
+				"page": "email",
 				"attempt": attempt,
 				"form_token": browser,
-				"challenge": row,
+				"challenge": {"spent": row["spent"], "generation": row["generation"]} if row else None,
 				"error": error,
 				"destination": destination,
 				"password_url": "/login?" + urlencode({"redirect-to": destination}),

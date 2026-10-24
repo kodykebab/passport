@@ -29,7 +29,7 @@ class RecoveryTests(unittest.TestCase):
 		row = {"exp": time.time() - 1}
 		with (
 			patch.object(federation.store, "get", return_value=row),
-			patch.object(federation, "local_valid", return_value={"user": "alice@example.com"}),
+			patch.object(federation, "get_valid_local_session", return_value={"user": "alice@example.com"}),
 			patch("passport_client.auth.session_page", return_value=Response(status=403)),
 		):
 			frappe.local.request.path = "/api/method/frappe.auth.get_logged_user"

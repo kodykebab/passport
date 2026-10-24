@@ -85,7 +85,7 @@ def rows(kind, *, user=None, issuer_sid=None, lock=False):
 	return [(key, json.loads(data)) for key, data in frappe.db.sql(query, parameters)]
 
 
-def native(sid, user=None, lock=False):
+def get_valid_native_session(sid, user=None, lock=False):
 	from frappe.sessions import get_expiry_in_seconds
 
 	if lock and not user:

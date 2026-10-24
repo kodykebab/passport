@@ -143,7 +143,7 @@ def authorize():
 		return redirect("/login?" + urlencode({"redirect-to": frappe.request.full_path}))
 	if frappe.session.user == "Administrator":
 		return json_response(403, {"error": "access_denied"})
-	native = store.native(frappe.session.sid, frappe.session.user, lock=True)
+	native = store.get_valid_native_session(frappe.session.sid, frappe.session.user, lock=True)
 	if not native:
 		return json_response(403, {"error": "login_revoked"})
 	code = secrets.token_urlsafe(32)
@@ -177,7 +177,7 @@ def token(client, body):
 		or not hmac.compare_digest(grant["challenge"], protocol.pkce_challenge(body.get("code_verifier", "")))
 	):
 		raise ValueError("invalid_grant")
-	native = store.native(grant["issuer_sid"], grant["user"], lock=True)
+	native = store.get_valid_native_session(grant["issuer_sid"], grant["user"], lock=True)
 	if not native:
 		raise ValueError("login_revoked")
 	now = int(time.time())
@@ -213,7 +213,7 @@ def lease(client, body):
 	if (
 		not login
 		or login["client"] != client.name
-		or not store.native(login["issuer_sid"], login["user"], lock=True)
+		or not store.get_valid_native_session(login["issuer_sid"], login["user"], lock=True)
 	):
 		raise ValueError("login_revoked")
 	login = store.get("login", body["sid"], lock=True)

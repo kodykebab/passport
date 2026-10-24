@@ -3,7 +3,7 @@
 from urllib.parse import urlencode
 
 import frappe
-from passport_core.ui import assets
+from passport_core.ui import render_page
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
@@ -19,10 +19,11 @@ def response():
 	if frappe.session.user != "Guest":
 		return redirect(destination)
 	return Response(
-		frappe.render_template(
-			"templates/login.html",
+		render_page(
+			"passport",
+			"Sign in to Frappe ID",
 			{
-				"ui": assets("passport"),
+				"page": "password",
 				"destination": destination,
 				"password_enabled": not frappe.get_system_settings("disable_user_pass_login"),
 				"email_url": "/passport/email?" + urlencode({"redirect-to": destination})

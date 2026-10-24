@@ -7,12 +7,6 @@ export PATH="/opt/homebrew/opt/node@26/bin:$MARIADB/bin:$PATH"
 
 DB_PORT=3327
 DB_ROOT_PASSWORD=root
-WEB_PORT=8080
-ISSUER=id.localhost
-SITES=(site1.localhost site2.localhost)
-ADMIN_PASSWORD=admin
-DEMO_USER=alice@example.com
-DEMO_PASSWORD=alice-passport-1
 
 mkdir -p "$DATA/logs"
 

@@ -114,7 +114,9 @@ try:
 		frappe.db.sql("SELECT name FROM tabUser WHERE name=%s FOR UPDATE", USER)
 		worker.start()
 		assert reached_user.wait(5), "Update did not reach the User boundary"
-		assert store.native(sid, USER, lock=True), "Renewal validation must acquire native session"
+		assert store.get_valid_native_session(sid, USER, lock=True), (
+			"Renewal validation must acquire native session"
+		)
 		frappe.db.commit()
 	assert finished.wait(8), "Concurrent native update did not finish"
 	worker.join()

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import frappe
 from frappe.sessions import delete_session, get_csrf_token
 from frappe.utils.password import check_password
-from passport_core.ui import assets
+from passport_core.ui import render_page
 from werkzeug.exceptions import Forbidden
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
@@ -38,7 +38,7 @@ def insert(session):
 def validate_session(sid, data):
 	if not data:
 		return False
-	if not store.native(sid, data.get("user")):
+	if not store.get_valid_native_session(sid, data.get("user")):
 		delete_session(sid, user=data.get("user"), reason="Frappe ID session ended")
 		return False
 
@@ -66,7 +66,7 @@ def response():
 	if frappe.session.user == "Guest":
 		return redirect("/login?redirect-to=/account")
 	user = frappe.session.user
-	if not store.native(frappe.session.sid, user):
+	if not store.get_valid_native_session(frappe.session.sid, user):
 		raise Forbidden("This browser session has ended")
 	if frappe.request.method == "POST":
 		# Require the explicit native token even when the framework accepts same-origin referrers.
@@ -113,7 +113,7 @@ def account_page(user, *, error=None, status=200):
 	profile = frappe.db.get_value("User", user, ["email", "full_name"], as_dict=True)
 	sessions = []
 	for sid, raw in frappe.db.sql("SELECT sid,sessiondata FROM tabSessions WHERE user=%s", user):
-		if not store.native(sid, user):
+		if not store.get_valid_native_session(sid, user):
 			continue
 		data = json.loads(raw)
 		sessions.append(
@@ -123,10 +123,11 @@ def account_page(user, *, error=None, status=200):
 				"current": sid == frappe.session.sid,
 			}
 		)
-	html = frappe.render_template(
-		"templates/account.html",
+	html = render_page(
+		"passport",
+		"Frappe ID account",
 		{
-			"ui": assets("passport"),
+			"page": "account",
 			"csrf_token": get_csrf_token(),
 			"profile": profile,
 			"sessions": sessions,
