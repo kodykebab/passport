@@ -8,7 +8,7 @@ Run the existing services with `env/start.sh`. Demo issuer login remains `alice@
 
 Implementation sequence: Ed25519 issuer/client authentication and discovery/JWKS; durable native-session-bound five-minute leases across HTTP/realtime; small account page with display-name edits, read-only email and browser-session logout. This is a development PoC, not production readiness.
 
-Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Signup, automatic site-user creation, consent/linking screens, email changes/deletion, Cloud integration, notifications and clone/restore orchestration are deferred.
+Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Automatic site-user creation, consent/linking screens, email changes/deletion, Cloud integration, notifications and clone/restore orchestration are deferred.
 
 ## Run and validate this iteration
 
@@ -52,6 +52,7 @@ Choose **Use email code** on the issuer login page and retrieve the matching req
 ```sh
 .bench/env/bin/python -m unittest discover -s tests -p 'test_*.py'
 .bench/env/bin/python tests/email_challenge_integration.py
+.bench/env/bin/python tests/signup_integration.py
 .bench/env/bin/python tests/email_login_integration.py
 .bench/env/bin/python tests/login_integrity.py
 .bench/env/bin/python tests/iteration_e2e.py
@@ -74,3 +75,9 @@ The email delivery test needs Mailpit and the bench worker running. It consumes 
 On the dedicated Ubuntu environment, `tests/email_delivery_integration.py --mailpit-pid PID` tests actual SMTP failure and recovery. Run it with the bench Python and the PID of this project's `.data/bin/mailpit` process. It deliberately stops and restarts that process, retries queued delivery after Frappe's undo window, checks rejection after controlled code expiry, and leaves Mailpit running. Do not run it during someone else's browser acceptance session.
 
 This repository contains source, contracts and test code. Local environment state, test reports, screenshots and historical investigation artifacts are not published. Setup expects the existing development bench and seeded sites; it is not a fresh-install bootstrap.
+
+## Verified issuer signup
+
+The [issuer-signup iteration](docs/prebuild/signup-contract.md) adds opt-in registration at `/passport/signup`. It creates only a verified issuer identity, never client-site access. `passport_allow_signup` defaults off; native Frappe registration remains disabled. Development mail capture is not proof of real mailbox ownership.
+
+The signup integration test uses dedicated `example.invalid` issuer accounts, overrides eligibility only inside its test process, suppresses mail/background jobs and removes its fixtures. It does not enable the public signup switch or replace mail/browser acceptance. Native Frappe registration must remain disabled when enabling Frappe ID signup; the two entry points are intentionally separate.

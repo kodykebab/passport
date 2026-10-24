@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 const build = resolve("../apps/passport/passport/public/ui");
 const manifest = JSON.parse(
-  await readFile(resolve(build, "manifest.json"), "utf8"),
+  await readFile(resolve(build, "manifest.json"), "utf8")
 )["src/main.js"];
 
 async function render(page, data) {
@@ -27,8 +27,8 @@ async function render(page, data) {
       const contentType = file.endsWith(".js")
         ? "text/javascript"
         : file.endsWith(".css")
-          ? "text/css"
-          : "font/woff2";
+        ? "text/css"
+        : "font/woff2";
       return route.fulfill({
         contentType,
         body: await readFile(resolve(build, file)),
@@ -36,7 +36,16 @@ async function render(page, data) {
     }
     return route.fulfill({
       contentType: "text/html",
-      body: `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/assets/${manifest.css[0]}"></head><body><div id="passport-ui"></div><script id="passport-data" type="application/json">${JSON.stringify(data).replaceAll("<", "\\u003c")}</script><script type="module" src="/assets/${manifest.file}"></script></body></html>`,
+      body: `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/assets/${
+        manifest.css[0]
+      }"></head><body><div id="passport-ui"></div><script id="passport-data" type="application/json">${JSON.stringify(
+        data
+      ).replaceAll(
+        "<",
+        "\\u003c"
+      )}</script><script type="module" src="/assets/${
+        manifest.file
+      }"></script></body></html>`,
     });
   });
   await page.goto("http://passport.test/account");
@@ -63,7 +72,7 @@ for (const [action, label] of [
     const form = page.locator("form").filter({ has: button });
     await expect(page.getByLabel("Email", { exact: true })).toHaveAttribute(
       "readonly",
-      "",
+      ""
     );
     await form
       .getByLabel("Confirm your password", { exact: false })
@@ -113,7 +122,7 @@ test("email form preserves request binding, code generation, labels and cooldown
     password_url: "/login",
   });
   await expect(
-    page.getByRole("button", { name: /Send another code/ }),
+    page.getByRole("button", { name: /Send another code/ })
   ).toBeDisabled();
   await page.getByLabel("Code", { exact: false }).fill("123456");
   await page.getByLabel("Code", { exact: false }).press("Enter");
@@ -146,15 +155,15 @@ test("narrow error feedback remains readable and receives focus", async ({
   await expect(page.getByRole("alert")).toBeFocused();
   await expect(page.getByRole("alert")).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    375,
+    375
   );
   expect(
     await page
       .getByText(
         "Incorrect code. Please check the newest message for this request and try again.",
-        { exact: true },
+        { exact: true }
       )
-      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+      .evaluate((element) => element.scrollWidth <= element.clientWidth)
   ).toBe(true);
 });
 
@@ -172,7 +181,7 @@ test("password errors stay inline, then Enter uses native authentication", async
   await page.route("**/api/method/login", async (route) => {
     attempts++;
     expect(
-      Object.fromEntries(new URLSearchParams(route.request().postData())),
+      Object.fromEntries(new URLSearchParams(route.request().postData()))
     ).toEqual({
       usr: "alice@example.com",
       pwd: attempts === 1 ? "incorrect" : "correct",
@@ -187,23 +196,23 @@ test("password errors stay inline, then Enter uses native authentication", async
   });
   await expect(page.locator("input[name=usr]")).toBeFocused();
   await expect(
-    page.getByRole("link", { name: "Use email code" }),
+    page.getByRole("link", { name: "Use email code" })
   ).toHaveAttribute("target", "_self");
   await page.locator("input[name=usr]").fill("alice@example.com");
   await page.locator("input[name=pwd]").fill("incorrect");
   await page.locator("input[name=pwd]").press("Enter");
   await expect(page.getByRole("alert")).toBeFocused();
   await expect(page.getByRole("alert")).toContainText(
-    "Incorrect email or password",
+    "Incorrect email or password"
   );
   await expect(page.locator("input[name=pwd]")).toHaveValue("");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    375,
+    375
   );
   await page.locator("input[name=pwd]").fill("correct");
   await page.locator("input[name=pwd]").press("Enter");
   await expect(page).toHaveURL(
-    "http://passport.test/oidc/authorize?state=bound",
+    "http://passport.test/oidc/authorize?state=bound"
   );
   expect(attempts).toBe(2);
 });
@@ -215,7 +224,7 @@ test("native password policy hides password controls", async ({ page }) => {
     email_url: "/passport/email",
   });
   await expect(page.getByRole("alert")).toContainText(
-    "Password login is disabled",
+    "Password login is disabled"
   );
   await expect(page.locator("input")).toHaveCount(0);
   await page.getByRole("link", { name: "Use email code" }).click();
@@ -245,11 +254,85 @@ for (const failure of ["throttle", "network"]) {
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("alert")).toHaveCount(1);
     await expect(page.getByRole("alert")).toContainText(
-      failure === "network" ? "Unable to reach" : "Too many password attempts",
+      failure === "network" ? "Unable to reach" : "Too many password attempts"
     );
     expect(calls).toBe(1);
     await expect(
-      page.getByRole("button", { name: "Sign in", exact: true }),
+      page.getByRole("button", { name: "Sign in", exact: true })
     ).toBeEnabled();
   });
 }
+
+test("signup requests a code before collecting a password", async ({
+  page,
+}) => {
+  const submitted = await render(page, {
+    page: "email",
+    purpose: "signup",
+    path: "/passport/signup",
+    attempt: "signup-attempt",
+    form_token: "browser-proof",
+    destination: "/account",
+    password_url: "/login",
+  });
+  await expect(
+    page.getByRole("heading", { name: "Create your Frappe ID" })
+  ).toBeVisible();
+  await expect(page.getByLabel("Choose a password")).toHaveCount(0);
+  await page.getByLabel(/^Email/).fill("new@example.test");
+  await page.getByRole("button", { name: "Send code", exact: true }).click();
+  await expect.poll(submitted).toMatchObject({
+    path: "/passport/signup",
+    fields: {
+      action: "send",
+      email: "new@example.test",
+      attempt: "signup-attempt",
+      form_token: "browser-proof",
+    },
+  });
+  expect(submitted().fields).not.toHaveProperty("password");
+});
+
+test("signup verification submits credentials with its own request binding at 375px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const submitted = await render(page, {
+    page: "email",
+    purpose: "signup",
+    path: "/passport/signup",
+    attempt: "signup-attempt",
+    form_token: "browser-proof",
+    destination: "/account",
+    password_url: "/login",
+    challenge: { generation: 2, spent: false },
+    wait: 60,
+  });
+  await expect(
+    page.getByRole("button", { name: "Send another code" })
+  ).toBeDisabled();
+  await expect(
+    page.getByText("This creates your Frappe ID only.", { exact: false })
+  ).toBeVisible();
+  await page.getByLabel(/^Code/).fill("123456");
+  await page.getByLabel(/^Display name/).fill("New User");
+  await page.getByLabel(/^Choose a password/).fill("signup-test-password");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth
+    )
+  ).toBe(true);
+  await page.getByLabel(/^Choose a password/).press("Enter");
+  await expect.poll(submitted).toMatchObject({
+    path: "/passport/signup",
+    fields: {
+      action: "verify",
+      attempt: "signup-attempt",
+      form_token: "browser-proof",
+      generation: "2",
+      code: "123456",
+      display_name: "New User",
+      password: "signup-test-password",
+    },
+  });
+});

@@ -1,4 +1,4 @@
-"""Browser-bound email challenges for existing issuer users."""
+"""Browser-bound email challenges for issuer login and verified signup."""
 
 import hashlib
 import hmac
@@ -13,7 +13,7 @@ from werkzeug.exceptions import BadRequest
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
-from passport import protocol, store
+from passport import protocol, signup, store
 
 PATH = "/passport/email"
 CODE_LIFETIME = 300
@@ -46,7 +46,7 @@ def return_path(path):
 
 
 def boundary():
-	if frappe.request.path != PATH:
+	if frappe.request.path not in (PATH, signup.PATH):
 		return
 	if frappe.request.content_length and frappe.request.content_length > 4096:
 		raise BadRequest("Request too large")
@@ -90,17 +90,24 @@ def lock_and_check_user(user, email):
 	return bool(rows and rows[0][0] and rows[0][1].strip().lower() == email)
 
 
-def lock_challenge(attempt, browser):
+def lock_challenge(attempt, browser, purpose="login"):
 	row = store.get("email_challenge", attempt)
-	if not row or not hmac.compare_digest(row["browser"], browser):
+	if not row or row.get("purpose", "login") != purpose or not hmac.compare_digest(row["browser"], browser):
 		raise ChallengeError("This attempt has ended. Start a new login.")
 	# Discard the initial read snapshot before current locking reads on MariaDB.
 	frappe.db.commit()
-	valid_user = lock_and_check_user(row["user"], row["email"])
-	current_generation = store.generation(row["user"], lock=True) if valid_user else None
+	valid_user = (
+		signup.available_email(row["email"])
+		if purpose == "signup"
+		else lock_and_check_user(row["user"], row["email"])
+	)
+	current_generation = (
+		store.generation(row["user"], lock=True) if valid_user and purpose == "login" else None
+	)
 	row = store.get("email_challenge", attempt, lock=True)
 	if (
 		not row
+		or row.get("purpose", "login") != purpose
 		or not hmac.compare_digest(row["browser"], browser)
 		or row["spent"]
 		or row["deadline"] <= time.time()
@@ -114,9 +121,16 @@ def queue_code(attempt, row, code):
 	queue = frappe.sendmail(
 		recipients=[row["email"]],
 		sender=frappe.conf.get("passport_email_sender"),
-		subject="Your Frappe ID login code",
+		subject="Your Frappe ID signup code"
+		if row.get("purpose") == "signup"
+		else "Your Frappe ID login code",
 		template="passport_login_code",
-		args={"code": code, "request": attempt[:8], "generation": row["generation"]},
+		args={
+			"code": code,
+			"request": attempt[:8],
+			"generation": row["generation"],
+			"purpose": row.get("purpose", "login"),
+		},
 		delayed=True,
 		add_unsubscribe_link=0,
 	)
@@ -146,21 +160,22 @@ def deliver(attempt, generation, name):
 	frappe.get_doc("Email Queue", name).send()
 
 
-def issue(attempt, browser, email, destination):
+def issue(attempt, browser, email, destination, purpose="login"):
 	email = email.strip().lower()
 	if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) or len(email) > 140:
 		raise ChallengeError("Enter a valid email address.")
 	limit_issuance(email)
 	user = frappe.db.get_value("User", {"email": email}, "name")
 	frappe.db.commit()
-	valid_user = lock_and_check_user(user, email)
+	valid_user = signup.available_email(email) if purpose == "signup" else lock_and_check_user(user, email)
 	now = int(time.time())
 	row = {
+		"purpose": purpose,
 		"user": user,
 		"email": email,
 		"browser": browser,
 		"return": return_path(destination),
-		"user_generation": store.generation(user, lock=True) if valid_user else None,
+		"user_generation": store.generation(user, lock=True) if valid_user and purpose == "login" else None,
 		"deadline": now + ATTEMPT_LIFETIME,
 		"failures": 0,
 		"spent": False,
@@ -185,8 +200,8 @@ def set_code(attempt, row, valid_user):
 		queue_code(attempt, row, code)
 
 
-def resend(attempt, browser):
-	row, valid_user = lock_challenge(attempt, browser)
+def resend(attempt, browser, purpose="login"):
+	row, valid_user = lock_challenge(attempt, browser, purpose)
 	if row["resend_after"] > time.time():
 		raise ChallengeError("Please wait before requesting another code.")
 	limit_issuance(row["email"])
@@ -195,8 +210,8 @@ def resend(attempt, browser):
 	frappe.db.commit()
 
 
-def verify(attempt, browser, code, generation):
-	row, valid_user = lock_challenge(attempt, browser)
+def verify(attempt, browser, code, generation, *, purpose="login", display_name="", password=""):
+	row, valid_user = lock_challenge(attempt, browser, purpose)
 	if row["expires"] <= time.time():
 		raise ChallengeError("This code has expired. Request another code.")
 	if str(row["generation"]) != generation:
@@ -209,9 +224,15 @@ def verify(attempt, browser, code, generation):
 		store.put("email_challenge", attempt, row)
 		frappe.db.commit()
 		raise ChallengeError("Incorrect or unavailable code. Try again, or start a new login.")
+	if purpose == "signup":
+		display_name = signup.validate_profile(row["email"], display_name, password)
 	row["spent"] = True
 	store.put("email_challenge", attempt, row)
 	frappe.db.commit()
+	if purpose == "signup":
+		row["user"], row["user_generation"] = signup.create_verified_user(
+			row["email"], display_name, password
+		)
 	frappe.flags.passport_email_auth = {
 		"user": row["user"],
 		"generation": row["user_generation"],
@@ -232,8 +253,27 @@ def verify(attempt, browser, code, generation):
 
 
 def response():
-	if frappe.request.path != PATH:
+	if frappe.request.path not in (PATH, signup.PATH):
 		return None
+	path = frappe.request.path
+	purpose = "signup" if path == signup.PATH else "login"
+	if purpose == "signup" and not signup.enabled():
+		return Response(
+			render_page(
+				"passport",
+				"Signup is unavailable",
+				{
+					"page": "session",
+					"title": "Signup is unavailable",
+					"message": "New account registration is not available. You can still sign in.",
+					"link": "/login",
+					"link_label": "Sign in",
+				},
+			),
+			status=403,
+			content_type="text/html",
+			headers={"Cache-Control": "no-store"},
+		)
 	if frappe.request.method not in ("GET", "POST"):
 		return Response(status=405)
 	if frappe.session.user != "Guest":
@@ -247,7 +287,7 @@ def response():
 	attempt = secrets.token_hex(16) if fresh else attempt
 	if not attempt or not re.fullmatch(r"[a-f0-9]{32}", attempt):
 		return Response("Invalid login attempt", status=400)
-	cookie_name = "passport_email_" + attempt
+	cookie_name = ("passport_signup_" if purpose == "signup" else "passport_email_") + attempt
 	secret = secrets.token_urlsafe(32) if fresh else frappe.request.cookies.get(cookie_name, "")
 	browser = protocol.digest(secret.encode())
 	if not secret:
@@ -266,23 +306,27 @@ def response():
 					browser,
 					frappe.request.form.get("email", ""),
 					frappe.request.form.get("redirect-to"),
+					purpose,
 				)
 			elif action == "resend":
-				resend(attempt, browser)
+				resend(attempt, browser, purpose)
 			elif action == "verify":
 				destination = verify(
 					attempt,
 					browser,
 					frappe.request.form.get("code", ""),
 					frappe.request.form.get("generation", ""),
+					purpose=purpose,
+					display_name=frappe.request.form.get("display_name", ""),
+					password=frappe.request.form.get("password", ""),
 				)
 				result = redirect(destination, code=303)
-				result.delete_cookie(cookie_name, path=PATH)
+				result.delete_cookie(cookie_name, path=path)
 				result.headers["Cache-Control"] = "no-store"
 				return result
 			else:
 				raise ChallengeError("Invalid action.")
-			return redirect(PATH + "?" + urlencode({"attempt": attempt}), code=303)
+			return redirect(path + "?" + urlencode({"attempt": attempt}), code=303)
 		except ChallengeError as exc:
 			frappe.db.rollback()
 			error, status = str(exc), 400
@@ -299,22 +343,28 @@ def response():
 			httponly=True,
 			samesite="Lax",
 			secure=frappe.request.scheme == "https",
-			path=PATH,
+			path=path,
 		)
 	return result
 
 
 def page(attempt, browser, *, error=None, status=200):
+	purpose = "signup" if frappe.request.path == signup.PATH else "login"
 	row = store.get("email_challenge", attempt)
-	if row and not hmac.compare_digest(row["browser"], browser):
+	if row and (row.get("purpose", "login") != purpose or not hmac.compare_digest(row["browser"], browser)):
 		row = None
 	destination = return_path(row["return"] if row else frappe.request.args.get("redirect-to"))
 	return Response(
 		render_page(
 			"passport",
-			"Sign in to Frappe ID",
+			"Create your Frappe ID" if purpose == "signup" else "Sign in to Frappe ID",
 			{
 				"page": "email",
+				"purpose": purpose,
+				"path": signup.PATH if purpose == "signup" else PATH,
+				"signup_url": signup.PATH + "?" + urlencode({"redirect-to": destination})
+				if signup.enabled()
+				else None,
 				"attempt": attempt,
 				"form_token": browser,
 				"challenge": {"spent": row["spent"], "generation": row["generation"]} if row else None,

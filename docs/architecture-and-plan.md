@@ -18,8 +18,12 @@ Test real login and existing identity links; algorithm/key/audience/nonce and cl
 
 ## Later work
 
-Later work includes public signup, automatic site-account creation, consent/linking screens, email change, account deletion, Cloud directory/provisioning, notifications, clone/restore orchestration and wider multi-site validation. A framework upgrade or replacement bench is outside this iteration.
+Later work includes automatic site-account creation, consent/linking screens, email change, account deletion, Cloud directory/provisioning, notifications, clone/restore orchestration and wider multi-site validation. A framework upgrade or replacement bench is outside this iteration.
 
 ## Email-login iteration
 
 Add email-code login for existing issuer accounts according to the [email-login contract](prebuild/email-login-contract.md). Retain password login, password confirmation for account mutations, existing identity links and site-owned admission. Use local email capture during development.
+
+## Issuer-signup iteration
+
+Add opt-in email-verified signup for issuer-only identities under the [signup contract](prebuild/signup-contract.md). Preserve native registration restrictions, existing users, password confirmation, manual client links and site admission. No automatic client provisioning.

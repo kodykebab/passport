@@ -1,6 +1,6 @@
 # Email-code login — current iteration
 
-Existing enabled accounts only, on the retained Frappe development checkout and one issuer/client. Password login remains available. Account mutations still require a fresh password. No signup, automatic identity linking, site-user creation or admission changes.
+Existing enabled accounts only, on the retained Frappe development checkout and one issuer/client. Password login remains available. Account mutations still require a fresh password. The `/passport/email` route never creates accounts. The separate [signup contract](signup-contract.md) covers opt-in issuer registration; neither flow automatically links identities, creates client-site users or changes client admission.
 
 The issuer offers `/passport/email` alongside password login. Each browser attempt has its own random identifier and HttpOnly SameSite cookie; POSTs require a matching form token. Attempts in separate tabs are independent. Return navigation is limited to the issuer authorization route or account page, and never replays an application action.
 

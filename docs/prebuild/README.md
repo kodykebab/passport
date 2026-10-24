@@ -5,3 +5,5 @@ The [active iteration](../architecture-and-plan.md) defines this PoC. Retain the
 The [login and lease contract](login-and-lease-contract.md) governs this slice. Cloud provisioning, a framework upgrade and broader release designs are deferred.
 
 The [email-login contract](email-login-contract.md) adds code login for existing issuer users. Account actions retain fresh-password confirmation.
+
+The [signup contract](signup-contract.md) adds opt-in verified issuer registration without client-site provisioning.

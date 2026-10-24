@@ -11,7 +11,9 @@ onMounted(() =>
 );
 const title = computed(() =>
   ["email", "password"].includes(data.page)
-    ? "Sign in to Frappe ID"
+    ? data.purpose === "signup"
+      ? "Create your Frappe ID"
+      : "Sign in to Frappe ID"
     : data.page === "account"
     ? "Frappe ID account"
     : data.title
@@ -44,6 +46,7 @@ const title = computed(() =>
             :destination="data.destination"
             :enabled="data.password_enabled"
             :email-url="data.email_url"
+            :signup-url="data.signup_url"
           />
           <EmailLogin v-else-if="data.page === 'email'" :data="data" />
           <SessionRecovery v-else :data="data" />

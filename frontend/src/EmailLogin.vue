@@ -3,6 +3,8 @@ import { onMounted, onUnmounted, ref } from "vue";
 import { Alert, Button, FormControl } from "frappe-ui";
 import PostForm from "./PostForm.vue";
 const { data } = defineProps({ data: Object });
+const signingUp = data.purpose === "signup";
+const path = data.path || "/passport/email";
 const remaining = ref(data.wait || 0);
 const resendAt = Date.now() + remaining.value * 1000;
 let timer;
@@ -26,14 +28,18 @@ const emailFields = (action) => ({
     <Alert
       theme="blue"
       title="Check your inbox"
-      description="If this address belongs to an eligible account, a code has been queued. Enter it in this browser within five minutes."
+      :description="
+        signingUp
+          ? 'If this address can be registered, a code has been queued. Already registered? Use sign in.'
+          : 'If this address belongs to an eligible account, a code has been queued. Enter it in this browser within five minutes.'
+      "
     />
     <p class="text-sm text-ink-gray-6">
       Request {{ data.attempt.slice(0, 8) }}, code
       {{ data.challenge.generation }}. Use the newest code for this request.
     </p>
     <PostForm
-      action="/passport/email"
+      :action="path"
       :fields="{
         ...emailFields('verify'),
         generation: data.challenge.generation,
@@ -51,18 +57,42 @@ const emailFields = (action) => ({
         data-autofocus
         size="md"
       />
+      <template v-if="signingUp">
+        <FormControl
+          label="Display name"
+          name="display_name"
+          autocomplete="name"
+          maxlength="140"
+          required
+          size="md"
+        />
+        <FormControl
+          label="Choose a password"
+          type="password"
+          name="password"
+          autocomplete="new-password"
+          maxlength="512"
+          required
+          size="md"
+          description="You will need this password to change account details or log out devices."
+        />
+        <Alert
+          theme="blue"
+          description="This creates your Frappe ID only. Access to other sites requires their administrator's approval."
+        />
+      </template>
       <Button
         type="submit"
         variant="solid"
         size="md"
         class="w-full"
         :loading="pending"
-        loading-text="Signing in…"
-        >Sign in</Button
+        :loading-text="signingUp ? 'Creating account…' : 'Signing in…'"
+        >{{ signingUp ? "Create Frappe ID" : "Sign in" }}</Button
       >
     </PostForm>
     <PostForm
-      action="/passport/email"
+      :action="path"
       :fields="emailFields('resend')"
       v-slot="{ pending }"
     >
@@ -80,7 +110,7 @@ const emailFields = (action) => ({
   </template>
   <PostForm
     v-else-if="!data.challenge"
-    action="/passport/email"
+    :action="path"
     :fields="{
       ...emailFields('send'),
       'redirect-to': data.destination,
@@ -120,13 +150,21 @@ const emailFields = (action) => ({
       >Use password login</Button
     >
     <Button
-      :href="`/passport/email?redirect-to=${encodeURIComponent(
-        data.destination
-      )}`"
+      :href="`${path}?redirect-to=${encodeURIComponent(data.destination)}`"
       target="_self"
       variant="ghost"
       size="md"
-      >Start a new email login</Button
+      >{{
+        signingUp ? "Start a new signup" : "Start a new email login"
+      }}</Button
+    >
+    <Button
+      v-if="!signingUp && data.signup_url"
+      :href="data.signup_url"
+      target="_self"
+      variant="ghost"
+      size="md"
+      >Create a Frappe ID</Button
     >
   </nav>
 </template>

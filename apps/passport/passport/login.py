@@ -7,6 +7,7 @@ from passport_core.ui import render_page
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
+from passport import signup
 from passport.email_login import return_path
 
 
@@ -24,6 +25,9 @@ def response():
 			"Sign in to Frappe ID",
 			{
 				"page": "password",
+				"signup_url": signup.PATH + "?" + urlencode({"redirect-to": destination})
+				if signup.enabled()
+				else None,
 				"destination": destination,
 				"password_enabled": not frappe.get_system_settings("disable_user_pass_login"),
 				"email_url": "/passport/email?" + urlencode({"redirect-to": destination})

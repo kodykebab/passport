@@ -2,10 +2,11 @@
 import { nextTick, ref } from "vue";
 import { Alert, Button, FormControl } from "frappe-ui";
 
-const { destination, enabled, emailUrl } = defineProps({
+const { destination, enabled, emailUrl, signupUrl } = defineProps({
   destination: String,
   enabled: Boolean,
   emailUrl: String,
+  signupUrl: String,
 });
 const email = ref("");
 const password = ref("");
@@ -117,5 +118,14 @@ async function login() {
     size="md"
     class="w-full"
     >Use email code</Button
+  >
+  <Button
+    v-if="signupUrl"
+    :href="signupUrl"
+    target="_self"
+    variant="ghost"
+    size="md"
+    class="w-full"
+    >Create a Frappe ID</Button
   >
 </template>
