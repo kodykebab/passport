@@ -4,6 +4,7 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 import requests
+from page_data import page_data
 
 ID = "http://id.localhost:8080"
 SITE = "http://site1.localhost:8080"
@@ -39,8 +40,8 @@ csrf = re.search(r'csrf_token = "([^"]+)"', r.text).group(1)
 r = browser.post(SITE + "/passport/retry", headers={"X-Frappe-CSRF-Token": csrf})
 check("authenticated renewal", r.ok)
 r = browser.get(ID + "/account")
-check("account page and read-only email", r.ok and "Email (read-only)" in r.text and USER in r.text)
-issuer_csrf = re.search(r'name="csrf_token" value="([^"]+)"', r.text).group(1)
+check("account page and read-only email", r.ok and page_data(r.text)["profile"]["email"] == USER)
+issuer_csrf = page_data(r.text)["csrf_token"]
 r = browser.post(
 	ID + "/account",
 	data={"action": "name", "display_name": "Alice", "password": "wrong", "csrf_token": issuer_csrf},

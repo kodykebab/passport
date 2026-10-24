@@ -1,13 +1,13 @@
 import hashlib
-import re
 
 import frappe
 from live_support import ID, USER, check, db, login, renew
+from page_data import page_data
 
 first, first_csrf, _ = login()
 second, second_csrf, _ = login()
 page = first.get(ID + "/account")
-csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+csrf = page_data(page.text)["csrf_token"]
 with db():
 	local_name = frappe.db.get_value("User", USER, "full_name")
 with db("id.localhost"):

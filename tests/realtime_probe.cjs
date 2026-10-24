@@ -3,9 +3,9 @@ const {io} = require('../.bench/apps/frappe/node_modules/socket.io-client');
 const {performance} = require('node:perf_hooks');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const started = performance.now();
-const socket = io('http://127.0.0.1:9080/site1.localhost', {
+const socket = io(`http://127.0.0.1:${input.port}/site1.localhost`, {
   transports: ['websocket'], reconnection: false,
-  extraHeaders: {Origin:'http://site1.localhost:8080',Host:'site1.localhost:9080',Cookie:`sid=${input.sid}`}
+  extraHeaders: {Origin:'http://site1.localhost:8080',Host:`site1.localhost:${input.port}`,Cookie:`sid=${input.sid}`}
 });
 let connected = false;
 const timeout = setTimeout(() => {console.error('FAIL socket did not terminate');process.exit(1);}, 16000);

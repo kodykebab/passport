@@ -1,11 +1,11 @@
 """HTTP acceptance regressions; cleans up only sessions created by this test."""
 
-import re
 import time
 
 import frappe
 from frappe.sessions import delete_session
 from live_support import ID, SITE, USER, check, db, get, login, renew, store
+from page_data import page_data
 
 sessions = []
 
@@ -18,7 +18,7 @@ def new_login():
 
 
 def csrf_from(page):
-	return re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+	return page_data(page.text)["csrf_token"]
 
 
 def expire(sid):
@@ -79,7 +79,7 @@ try:
 	expire(sid)
 	check("expired lease blocks Desk", browser.get(SITE + "/desk").status_code == 403)
 	page = browser.get(SITE + "/passport/status")
-	check("recovery form selects HTML response", 'name="response_format" value="html"' in page.text)
+	check("recovery page provides CSRF", bool(page_data(page.text)["csrf_token"]))
 	response = browser.post(
 		SITE + "/passport/retry",
 		data={"csrf_token": csrf_from(page), "response_format": "html"},

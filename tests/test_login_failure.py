@@ -32,6 +32,7 @@ class CompletionFailureTests(unittest.TestCase):
 		claims = {
 			"nonce": "nonce",
 			"amr": ["pwd"],
+			"passport_auth_method": "password",
 			"iat": int(time.time()),
 			"exp": int(time.time()) + 60,
 			"issuer_session_expires_at": int(time.time()) + 3600,
