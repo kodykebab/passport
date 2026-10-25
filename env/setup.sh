@@ -11,4 +11,4 @@ cd "$BENCH"
 bench --site id.localhost migrate --skip-search-index
 bench --site site1.localhost migrate --skip-search-index
 bench --site id.localhost execute passport.setup.provision_iteration
-bench build --app passport_client
+"$BENCH/env/bin/python" "$ROOT/env/deployment.py" build

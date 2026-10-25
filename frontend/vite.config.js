@@ -14,14 +14,14 @@ export default defineConfig({
         cpSync(
           "../apps/passport/passport/public/ui",
           "../apps/passport_client/passport_client/public/ui",
-          { recursive: true },
+          { recursive: true }
         );
       },
     },
   ],
   build: {
     outDir: "../apps/passport/passport/public/ui",
-    emptyOutDir: true,
+    emptyOutDir: false,
     manifest: "manifest.json",
     rollupOptions: {
       input: "src/main.js",

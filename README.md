@@ -20,16 +20,14 @@ Open `http://site1.localhost:8080/passport/login`. Manage the issuer profile and
 
 The public password-login, email-code, account and session-recovery pages use official `frappe-ui` 1.0.2 with Vue 3. The standalone frontend build does not change Frappe's dependencies or require a Desk session. The issuer password screen calls native Frappe authentication, preserving its password policy and throttling. Native Desk UI remains framework-owned. The PoC supports the existing password-only accounts; additional native authentication steps are not implemented by this screen and fail closed.
 
-Build with Node 20.19+ (the Ubuntu environment uses Node 24):
+Use the [existing-environment deployment procedure](docs/deployment.md). It checks prerequisites and builds without the retained native `bench build` command's Redis flush:
 
 ```sh
-npm ci --prefix frontend
-npm run build --prefix frontend
-cd .bench
-bench build --app passport_client
+.bench/env/bin/python env/deployment.py check
+.bench/env/bin/python env/deployment.py build
 ```
 
-Build before serving the custom pages. Vite copies fingerprinted assets and a manifest into both apps' public directories; generated assets are ignored. The Desk notice uses the same components inside a shadow root to isolate its styles. Its small integration script uses Frappe's fingerprinted bundle pipeline. On deployment, retain older fingerprinted assets until existing pages have finished loading.
+Build before serving custom pages. Both apps receive fingerprinted public assets; older hashes remain available after rebuilding. The Desk notice uses the same components inside a shadow root to isolate its styles. Generated assets are ignored.
 
 Rendered form regressions run with `npm test --prefix frontend` after `npx --prefix frontend playwright install chromium`. They use synthetic page data and do not replace live browser acceptance.
 
