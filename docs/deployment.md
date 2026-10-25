@@ -44,13 +44,13 @@ Restart web, workers and scheduler through the existing process manager so they 
 
 Deploying source does not enable public signup or account linking. Preserve existing `passport_allow_signup` and `passport_allow_linking` settings. On a site enabling signup, native Frappe signup must remain disabled; password-verified linking operates only on existing site users. Neither feature provisions site admission or replaces existing links.
 
-The linking release adds the issuer’s hourly `passport.consent.cleanup` job without changing DocType schemas. During the maintenance window, synchronize scheduler definitions through the native API from the existing bench:
+Linking registers `passport.consent.cleanup`; account deletion registers `passport.deletion.retry_pending`. Both are hourly issuer jobs and do not change DocType schemas. During the maintenance window, synchronize scheduler definitions through the native API from the existing bench:
 
 ```sh
 bench --site id.localhost execute frappe.core.doctype.scheduled_job_type.scheduled_job_type.sync_jobs
 ```
 
-Use the actual issuer site name if it differs. This registers jobs from installed-app hooks; it does not run them, flush Redis or enable a disabled scheduler. Restart the existing scheduler/worker processes afterward and verify that the hourly cleanup job is registered. A standard reviewed migration also synchronizes these definitions. Avoid the development provisioning script for routine source-only updates: it intentionally provisions the development protocol configuration.
+Use the actual issuer site name if it differs. This registers jobs from installed-app hooks; it does not run them, flush Redis or enable a disabled scheduler. Restart the existing scheduler/worker processes afterward and verify that both hourly jobs are registered. A standard reviewed migration also synchronizes these definitions. Avoid the development provisioning script for routine source-only updates: it intentionally provisions the development protocol configuration.
 
 ## Native email service
 

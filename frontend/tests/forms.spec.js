@@ -438,6 +438,49 @@ for (const revoked of [false, true]) {
   });
 }
 
+test("account deletion requires explicit confirmation and password at 375px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const submitted = await render(page, {
+    page: "account",
+    profile: { email: "test@example.invalid", full_name: "Test" },
+    sessions: [],
+    connections: [],
+    can_delete: true,
+    csrf_token: "csrf",
+  });
+  await page
+    .getByRole("button", { name: "Delete Frappe ID", exact: true })
+    .click();
+  const form = page.locator("form").filter({
+    has: page.getByRole("button", {
+      name: "Permanently delete Frappe ID",
+      exact: true,
+    }),
+  });
+  await expect(form).toContainText("This cannot be undone");
+  await form
+    .getByLabel("Type DELETE to confirm", { exact: false })
+    .fill("DELETE");
+  await form.locator("[name=password]").fill("fresh-password");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth
+    )
+  ).toBe(true);
+  await form.locator("[name=password]").press("Enter");
+  await expect.poll(submitted).toEqual({
+    path: "/account",
+    fields: {
+      action: "delete",
+      csrf_token: "csrf",
+      confirmation: "DELETE",
+      password: "fresh-password",
+    },
+  });
+});
+
 test("site picker filters known sites and never links revoked sites", async ({
   page,
 }) => {

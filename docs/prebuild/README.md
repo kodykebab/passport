@@ -12,4 +12,4 @@ The [account-linking contract](account-linking-contract.md) adds opt-in linking 
 
 The [connected-sites contract](connected-sites-contract.md) adds issuer-side site access revocation without deleting site accounts or identity links.
 
-The [picker contract](site-picker-contract.md) defines navigation through existing site login and admission.
+The [deletion contract](account-deletion-contract.md) defines durable issuer removal without site data deletion. The [picker contract](site-picker-contract.md) defines navigation through existing site login and admission.

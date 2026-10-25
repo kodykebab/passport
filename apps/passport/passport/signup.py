@@ -4,7 +4,7 @@ import frappe
 from frappe.auth import MAX_PASSWORD_SIZE
 from frappe.core.doctype.user.user import test_password_strength
 
-from passport import protocol, store
+from passport import deletion, protocol, store
 
 PATH = "/passport/signup"
 
@@ -20,7 +20,10 @@ def enabled():
 
 def available_email(email):
 	return (
-		enabled() and not frappe.db.exists("User", {"email": email}) and not frappe.db.exists("User", email)
+		enabled()
+		and not frappe.db.exists("User", {"email": email})
+		and not frappe.db.exists("User", email)
+		and not deletion.pending(email)
 	)
 
 

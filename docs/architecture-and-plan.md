@@ -18,7 +18,7 @@ Test real login and existing identity links; algorithm/key/audience/nonce and cl
 
 ## Later work
 
-Later work includes automatic site-account creation, remembered/general consent, email change, account deletion, Cloud directory/provisioning, notifications, clone/restore orchestration and wider multi-site validation. A framework upgrade or replacement bench is outside this iteration.
+Later work includes automatic site-account creation, remembered/general consent, email change, Cloud directory/provisioning, notifications, clone/restore orchestration and wider multi-site validation. A framework upgrade or replacement bench is outside this iteration.
 
 ## Email-login iteration
 
@@ -36,6 +36,6 @@ Add opt-in linking of an existing enabled site account after fresh site-password
 
 Add issuer account controls for known authorized sites under the [connected-sites contract](prebuild/connected-sites-contract.md). Fresh-password revocation blocks new grants and renewals; allowing future sign-ins never revives old requests or sessions. Preserve site accounts, identity links and admission. Deployment clearance remains separate and pending.
 
-## Site-picker iteration
+## Account deletion and site-picker iterations
 
-Add authenticated site navigation under the [picker contract](prebuild/site-picker-contract.md), preserving site-owned admission.
+Implement issuer self-deletion under the [deletion contract](prebuild/account-deletion-contract.md), followed by authenticated site navigation under the [picker contract](prebuild/site-picker-contract.md). Preserve site-owned accounts/data and admission; email changes remain deferred. Production and broader validation follow these features separately.

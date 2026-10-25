@@ -4,6 +4,7 @@ import { Alert, Button, FormControl } from "frappe-ui";
 import PostForm from "./PostForm.vue";
 const { data } = defineProps({ data: Object });
 const displayName = ref(data.profile.full_name);
+const deleting = ref(false);
 const accountFields = (action) => ({ action, csrf_token: data.csrf_token });
 </script>
 <template>
@@ -173,6 +174,67 @@ const accountFields = (action) => ({ action, csrf_token: data.csrf_token });
         :loading="pending"
         loading-text="Logging out…"
         >Log out everywhere</Button
+      >
+    </PostForm>
+  </section>
+  <section
+    v-if="data.can_delete"
+    aria-labelledby="delete-heading"
+    class="space-y-4 rounded-6 border border-outline-gray-1 bg-surface-base p-6"
+  >
+    <h2 id="delete-heading" class="text-lg font-semibold">Delete Frappe ID</h2>
+    <p class="text-sm text-ink-gray-6">
+      Delete your issuer login and profile and end your Frappe ID sessions. Site
+      accounts and data remain unchanged. Existing site access expires within
+      five minutes. Historical logs, mail records and backups follow their
+      retention policies.
+    </p>
+    <Button
+      v-if="!deleting"
+      theme="red"
+      variant="outline"
+      @click="deleting = true"
+      >Delete Frappe ID</Button
+    >
+    <PostForm
+      v-else
+      action="/account"
+      :fields="accountFields('delete')"
+      v-slot="{ pending }"
+    >
+      <Alert
+        theme="red"
+        description="This cannot be undone. You may lose access to sites that require Frappe ID."
+      />
+      <FormControl
+        label="Type DELETE to confirm"
+        name="confirmation"
+        pattern="DELETE"
+        required
+        size="md"
+      />
+      <FormControl
+        label="Confirm your password"
+        type="password"
+        name="password"
+        autocomplete="current-password"
+        required
+        size="md"
+      />
+      <Button
+        type="submit"
+        theme="red"
+        variant="solid"
+        :loading="pending"
+        loading-text="Deleting…"
+        >Permanently delete Frappe ID</Button
+      >
+      <Button
+        type="button"
+        variant="ghost"
+        :disabled="pending"
+        @click="deleting = false"
+        >Cancel</Button
       >
     </PostForm>
   </section>

@@ -12,12 +12,14 @@ from werkzeug.exceptions import Forbidden
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
-from passport import connections, protocol, store
+from passport import connections, deletion, protocol, store
 
 
 def insert(session):
 	if session.user == "Guest":
 		return
+	if deletion.pending(session.user):
+		raise frappe.AuthenticationError("Account deletion is pending")
 	end = datetime.fromtimestamp(time.time() + 7 * 86400, timezone.utc)
 	if session.data.data.get("session_end"):
 		end = min(end, datetime.fromisoformat(session.data.data.session_end))
@@ -70,6 +72,33 @@ def response():
 				user, error="Too many password attempts. Please wait before trying again.", status=429
 			)
 		action = frappe.form_dict.get("action")
+		if action == "delete":
+			if frappe.form_dict.get("confirmation") != "DELETE":
+				return account_page(user, error="Type DELETE to confirm account deletion.", status=400)
+			try:
+				complete = deletion.request(user)
+			except ValueError as exc:
+				return account_page(user, error=str(exc), status=403)
+			from frappe.auth import clear_cookies
+
+			clear_cookies()
+			return Response(
+				render_page(
+					"passport",
+					"Account deleted" if complete else "Deletion pending",
+					{
+						"page": "session",
+						"title": "Account deleted" if complete else "Deletion pending",
+						"message": "Your Frappe ID login and profile have been deleted. Site accounts and data remain unchanged."
+						if complete
+						else "Your Frappe ID is disabled. Deletion could not finish and will be retried. Contact the issuer administrator if it remains pending.",
+						"link": "/login",
+						"link_label": "Return to sign in",
+					},
+				),
+				content_type="text/html",
+				headers={"Cache-Control": "no-store"},
+			)
 		if action == "name":
 			name = (frappe.form_dict.get("display_name") or "").strip()
 			if not name or len(name) > 140:
@@ -122,6 +151,7 @@ def account_page(user, *, error=None, status=200):
 			"profile": profile,
 			"sessions": sessions,
 			"connections": connections.sites(user),
+			"can_delete": deletion.eligible(user),
 			"error": error,
 		},
 	)

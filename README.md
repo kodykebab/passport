@@ -8,7 +8,7 @@ Run the existing services with `env/start.sh`. Demo issuer login remains `alice@
 
 Implementation sequence: Ed25519 issuer/client authentication and discovery/JWKS; durable native-session-bound five-minute leases across HTTP/realtime; small account page with display-name edits, read-only email and browser-session logout. This is a development PoC, not production readiness.
 
-Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Automatic site-user creation, email changes/deletion, Cloud integration, notifications and clone/restore orchestration are deferred. Opt-in issuer signup and existing-account linking are described below.
+Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Automatic site-user creation, email changes, Cloud integration, notifications and clone/restore orchestration are deferred. Opt-in issuer signup and existing-account linking are described below.
 
 ## Run and validate this iteration
 
@@ -90,6 +90,8 @@ Linking creates only the identity mapping for an existing enabled site user. It 
 
 The issuer account page lists sites authorized through this Frappe ID. Fresh password confirmation is required to revoke access or allow future sign-ins. Revocation blocks new sign-ins and renewals; already issued leases expire within five minutes. Allowing future sign-ins never revives old sessions. Site accounts, data and identity links remain unchanged. The issuer does not enumerate unvisited site-side links. See the [connected-sites contract](docs/prebuild/connected-sites-contract.md).
 
-## Site navigation
+## Account deletion and site navigation
+
+Eligible issuer users can delete their Frappe ID from the account page with a fresh password and explicit DELETE confirmation. The issuer disables access before removal; native dependency failures leave deletion pending for retry. System Managers require operator-managed removal. Site accounts, identity links and data are preserved. Historical logs, mail and backups follow their retention policies. See the [deletion contract](docs/prebuild/account-deletion-contract.md).
 
 `/sites` lists sites known from issuer authorization history and starts each enabled, non-revoked site's normal login flow. It does not provision accounts or guarantee admission. Reach it through **Your sites** on the account page or the app-provided **Switch site** Desk entry. See the [picker contract](docs/prebuild/site-picker-contract.md).
