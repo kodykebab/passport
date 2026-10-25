@@ -20,6 +20,20 @@ def expire(sid):
 
 with BrowserSessions() as sessions:
 	browser, csrf, sid = sessions.login()
+	rpc = {"cmd": "frappe.auth.get_logged_user"}
+	headers = {"X-Frappe-CSRF-Token": csrf}
+	check(
+		"native root RPC works within lease",
+		browser.post(SITE + "/", data=rpc, headers=headers).json()["message"] == USER,
+	)
+	check(
+		"native root RPC rejects session override",
+		browser.post(SITE + "/", data={**rpc, "sid": "foreign-session"}, headers=headers).status_code == 403,
+	)
+	check(
+		"client protocol route rejects command override",
+		browser.get(SITE + "/passport/status", params=rpc).status_code == 403,
+	)
 	issuer_sid = browser.cookies.get("sid", domain="id.localhost")
 	page = browser.get(ID + "/account")
 	token = csrf_from(page)
@@ -68,6 +82,10 @@ with BrowserSessions() as sessions:
 
 	expire(sid)
 	check("expired lease blocks Desk", browser.get(SITE + "/desk").status_code == 403)
+	check(
+		"expired lease blocks native root RPC",
+		browser.post(SITE + "/", data=rpc, headers=headers).status_code == 403,
+	)
 	page = browser.get(SITE + "/passport/status")
 	check("recovery page provides CSRF", bool(page_data(page.text)["csrf_token"]))
 	response = browser.post(

@@ -20,7 +20,8 @@ BACKGROUND = {
 def boundary():
 	path = frappe.request.path
 	if path.startswith("/passport/") or frappe.request.cookies.get("sid"):
-		if "sid" in frappe.form_dict or "cmd" in frappe.form_dict:
+		# Native website forms still dispatch RPC through cmd at the root route.
+		if "sid" in frappe.form_dict or ("cmd" in frappe.form_dict and path != "/"):
 			raise Forbidden("Invalid session parameters")
 	if path in BACKGROUND:
 		frappe.flags.passport_background = True
