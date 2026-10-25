@@ -3,6 +3,7 @@ import { computed, onMounted } from "vue";
 import { Alert, FrappeUIProvider } from "frappe-ui";
 import PasswordLogin from "./PasswordLogin.vue";
 import EmailLogin from "./EmailLogin.vue";
+import SitePicker from "./SitePicker.vue";
 import AccountPage from "./AccountPage.vue";
 import AccountLink from "./AccountLink.vue";
 import LinkConsent from "./LinkConsent.vue";
@@ -28,7 +29,9 @@ const title = computed(() =>
     >
       <div
         class="mx-auto space-y-6"
-        :class="data.page === 'account' ? 'max-w-xl' : 'max-w-sm'"
+        :class="
+          ['account', 'sites'].includes(data.page) ? 'max-w-xl' : 'max-w-sm'
+        "
       >
         <h1 class="text-center text-2xl font-semibold">{{ title }}</h1>
         <Alert
@@ -39,6 +42,7 @@ const title = computed(() =>
           data-error
         />
         <AccountPage v-if="data.page === 'account'" :data="data" />
+        <SitePicker v-else-if="data.page === 'sites'" :data="data" />
         <div
           v-else
           class="space-y-6 rounded-6 border border-outline-gray-1 bg-surface-base p-6 shadow-sm"

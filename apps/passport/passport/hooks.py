@@ -9,6 +9,7 @@ before_authentication = ["passport.oidc.boundary", "passport.email_login.boundar
 protocol_response = [
 	"passport.oidc.response",
 	"passport.account.response",
+	"passport.sites.response",
 	"passport.email_login.response",
 	"passport.login.response",
 ]

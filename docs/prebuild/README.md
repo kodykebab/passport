@@ -9,3 +9,7 @@ The [email-login contract](email-login-contract.md) adds code login for existing
 The [signup contract](signup-contract.md) adds opt-in verified issuer registration without client-site provisioning.
 
 The [account-linking contract](account-linking-contract.md) adds opt-in linking of existing site accounts after fresh site-password verification and explicit issuer consent.
+
+The [connected-sites contract](connected-sites-contract.md) adds issuer-side site access revocation without deleting site accounts or identity links.
+
+The [picker contract](site-picker-contract.md) defines navigation through existing site login and admission.

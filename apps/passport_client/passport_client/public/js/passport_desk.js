@@ -49,6 +49,9 @@
 			});
 		}
 		if (frappe.boot?.passport) {
+			if (frappe.boot.passport.sites_url) desktop.add_menu_item({
+				label: 'Switch site', url: frappe.boot.passport.sites_url, icon: 'grid',
+			});
 			desktop.add_menu_item({
 				label: 'Frappe ID account',
 				url: frappe.boot.passport.account_url,

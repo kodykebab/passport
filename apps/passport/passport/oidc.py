@@ -12,7 +12,7 @@ from werkzeug.exceptions import BadRequest
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
-from passport import consent, protocol, store
+from passport import connections, consent, protocol, store
 
 
 def issuer():
@@ -150,12 +150,17 @@ def authorize():
 	native = store.get_valid_native_session(frappe.session.sid, frappe.session.user, lock=True)
 	if not native:
 		return json_response(403, {"error": "login_revoked"})
+	try:
+		connections.check(frappe.session.user, client.name)
+	except ValueError:
+		return connections.revoked_page()
 	if a.get("passport_action") == "link":
 		return consent.page(client, a)
 	return issue_grant(client, a)
 
 
 def issue_grant(client, a, action="login"):
+	generation = connections.check(frappe.session.user, client.name)
 	code = secrets.token_urlsafe(32)
 	store.create(
 		"grant",
@@ -163,6 +168,7 @@ def issue_grant(client, a, action="login"):
 		{
 			"client": client.name,
 			"action": action,
+			"connection_generation": generation,
 			"redirect_uri": client.redirect_uri,
 			"user": frappe.session.user,
 			"sub": get_subject(frappe.session.user),
@@ -178,6 +184,12 @@ def issue_grant(client, a, action="login"):
 
 def token(client, body):
 	key = protocol.digest(body.get("code", "").encode())
+	grant = store.get("grant", key)
+	if not grant:
+		raise ValueError("invalid_grant")
+	native = store.get_valid_native_session(grant["issuer_sid"], grant["user"], lock=True)
+	if not native:
+		raise ValueError("login_revoked")
 	grant = store.get("grant", key, lock=True)
 	if (
 		not grant
@@ -188,9 +200,9 @@ def token(client, body):
 		or not hmac.compare_digest(grant["challenge"], protocol.pkce_challenge(body.get("code_verifier", "")))
 	):
 		raise ValueError("invalid_grant")
-	native = store.get_valid_native_session(grant["issuer_sid"], grant["user"], lock=True)
-	if not native:
-		raise ValueError("login_revoked")
+	connections.check(grant["user"], client.name, grant.get("connection_generation", 0))
+	if grant.get("action") == "link":
+		connections.remember(grant["user"], client.name)
 	now = int(time.time())
 	from datetime import datetime
 
@@ -234,6 +246,8 @@ def lease(client, body):
 	login = store.get("login", body["sid"], lock=True)
 	if login["revoked"] or login["deadline"] <= time.time():
 		raise ValueError("login_revoked")
+	connections.check(login["user"], client.name, login.get("connection_generation", 0))
+	connections.remember(login["user"], client.name)
 	if "binding" not in login:
 		if frappe.request.path != "/passport/complete" or login["pending_until"] <= time.time():
 			raise ValueError("invalid_grant")

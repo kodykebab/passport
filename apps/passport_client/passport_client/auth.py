@@ -328,6 +328,7 @@ def extend_bootinfo(bootinfo):
 	if row and not row["revoked"]:
 		bootinfo.passport = {
 			"account_url": config().issuer + "/account",
+			"sites_url": config().issuer + "/sites",
 			"expires": row["exp"],
 			"ui": assets("passport_client"),
 		}

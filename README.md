@@ -8,7 +8,7 @@ Run the existing services with `env/start.sh`. Demo issuer login remains `alice@
 
 Implementation sequence: Ed25519 issuer/client authentication and discovery/JWKS; durable native-session-bound five-minute leases across HTTP/realtime; small account page with display-name edits, read-only email and browser-session logout. This is a development PoC, not production readiness.
 
-Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Automatic site-user creation, consent/linking screens, email changes/deletion, Cloud integration, notifications and clone/restore orchestration are deferred.
+Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Automatic site-user creation, email changes/deletion, Cloud integration, notifications and clone/restore orchestration are deferred. Opt-in issuer signup and existing-account linking are described below.
 
 ## Run and validate this iteration
 
@@ -85,3 +85,11 @@ The signup integration test uses dedicated `example.invalid` issuer accounts, ov
 Sites may opt into password-verified linking with `passport_allow_linking`; it defaults off. Users open `/passport/link` (or **Link Frappe ID** in the local Desk menu), sign in with their native site account, confirm that site's password, then approve the chosen Frappe ID on the issuer. No administrator approval is needed for this flow. Native MFA or disabled password login prevents linking through this password-only interface.
 
 Linking creates only the identity mapping for an existing enabled site user. It never matches by email, creates site accounts, changes roles/names or replaces existing links. The current local session stays local; Frappe ID can be used on the next login. Cancellation, expired requests and session changes fail closed. See the [account-linking contract](docs/prebuild/account-linking-contract.md). Manually provisioned links and ordinary login remain supported.
+
+## Connected sites
+
+The issuer account page lists sites authorized through this Frappe ID. Fresh password confirmation is required to revoke access or allow future sign-ins. Revocation blocks new sign-ins and renewals; already issued leases expire within five minutes. Allowing future sign-ins never revives old sessions. Site accounts, data and identity links remain unchanged. The issuer does not enumerate unvisited site-side links. See the [connected-sites contract](docs/prebuild/connected-sites-contract.md).
+
+## Site navigation
+
+`/sites` lists sites known from issuer authorization history and starts each enabled, non-revoked site's normal login flow. It does not provision accounts or guarantee admission. Reach it through **Your sites** on the account page or the app-provided **Switch site** Desk entry. See the [picker contract](docs/prebuild/site-picker-contract.md).

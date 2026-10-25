@@ -1,12 +1,13 @@
 <script setup>
 import { ref } from "vue";
-import { Button, FormControl } from "frappe-ui";
+import { Alert, Button, FormControl } from "frappe-ui";
 import PostForm from "./PostForm.vue";
 const { data } = defineProps({ data: Object });
 const displayName = ref(data.profile.full_name);
 const accountFields = (action) => ({ action, csrf_token: data.csrf_token });
 </script>
 <template>
+  <Button href="/sites" variant="outline">Your sites</Button>
   <div
     class="space-y-6 rounded-6 border border-outline-gray-1 bg-surface-base p-6 shadow-sm"
   >
@@ -48,6 +49,61 @@ const accountFields = (action) => ({ action, csrf_token: data.csrf_token });
       >
     </PostForm>
   </div>
+  <section aria-labelledby="connections-heading" class="space-y-4">
+    <h2 id="connections-heading" class="text-lg font-semibold">
+      Connected sites
+    </h2>
+    <p class="text-sm text-ink-gray-6">
+      Sites authorized through this Frappe ID. Revoking access blocks sign-in
+      and renewal; existing access expires within five minutes. Site accounts
+      and data remain unchanged.
+    </p>
+    <Alert
+      v-if="!data.connections?.length"
+      theme="blue"
+      description="No authorized sites yet."
+    />
+    <div
+      v-for="site in data.connections"
+      :key="site.client"
+      class="rounded-6 border border-outline-gray-1 bg-surface-base p-6"
+    >
+      <PostForm
+        action="/account"
+        :fields="{
+          ...accountFields(site.revoked ? 'allow_site' : 'revoke_site'),
+          client: site.client,
+        }"
+        v-slot="{ pending }"
+      >
+        <h3 class="break-words font-semibold">{{ site.title }}</h3>
+        <p class="break-all text-sm text-ink-gray-6">{{ site.origin }}</p>
+        <Alert
+          v-if="site.revoked"
+          theme="blue"
+          description="Access revoked. Allowing future sign-ins will not restore old sessions."
+        />
+        <FormControl
+          label="Confirm your password"
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          required
+          size="md"
+        />
+        <Button
+          type="submit"
+          variant="outline"
+          size="md"
+          :loading="pending"
+          loading-text="Saving…"
+          >{{
+            site.revoked ? "Allow future sign-ins" : "Revoke site access"
+          }}</Button
+        >
+      </PostForm>
+    </div>
+  </section>
   <section aria-labelledby="sessions-heading" class="space-y-4">
     <h2 id="sessions-heading" class="text-lg font-semibold">
       Browser sessions

@@ -337,11 +337,21 @@ test("signup verification submits credentials with its own request binding at 37
   });
 });
 
-test("linking requires a site password and preserves CSRF binding", async ({ page }) => {
-  await render(page, { page: "link", title: "Link your Frappe ID", user: "local@example.test", csrf_token: "link-csrf", linked: false });
-  await expect(page.getByLabel("Site account", { exact: true })).toHaveAttribute("readonly", "");
+test("linking requires a site password and preserves CSRF binding", async ({
+  page,
+}) => {
+  await render(page, {
+    page: "link",
+    title: "Link your Frappe ID",
+    user: "local@example.test",
+    csrf_token: "link-csrf",
+    linked: false,
+  });
+  await expect(
+    page.getByLabel("Site account", { exact: true })
+  ).toHaveAttribute("readonly", "");
   await page.getByLabel(/^Confirm your site password/).fill("fixture-password");
-  const request = page.waitForRequest(r => r.method() === "POST");
+  const request = page.waitForRequest((r) => r.method() === "POST");
   await page.getByLabel(/^Confirm your site password/).press("Enter");
   const sent = await request;
   expect(new URL(sent.url()).pathname).toBe("/passport/link");
@@ -350,16 +360,128 @@ test("linking requires a site password and preserves CSRF binding", async ({ pag
   expect(fields.get("password")).toBe("fixture-password");
 });
 
-test("link consent shows the site and identity and submits explicit cancellation", async ({ page }) => {
+test("link consent shows the site and identity and submits explicit cancellation", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 375, height: 812 });
-  await render(page, { page: "consent", title: "Link your Frappe ID", client_title: "Example Site", origin: "https://site.example", profile: { email: "issuer@example.test", full_name: "Issuer Name" }, csrf_token: "consent-csrf", request_id: "request" });
-  await expect(page.getByLabel("Site", { exact: true })).toHaveValue("https://site.example");
-  await expect(page.getByLabel("Frappe ID email", { exact: true })).toHaveValue("issuer@example.test");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
-  const request = page.waitForRequest(r => r.method() === "POST");
-  await page.getByRole("button", { name: "Cancel linking", exact: true }).click();
+  await render(page, {
+    page: "consent",
+    title: "Link your Frappe ID",
+    client_title: "Example Site",
+    origin: "https://site.example",
+    profile: { email: "issuer@example.test", full_name: "Issuer Name" },
+    csrf_token: "consent-csrf",
+    request_id: "request",
+  });
+  await expect(page.getByLabel("Site", { exact: true })).toHaveValue(
+    "https://site.example"
+  );
+  await expect(page.getByLabel("Frappe ID email", { exact: true })).toHaveValue(
+    "issuer@example.test"
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    375
+  );
+  const request = page.waitForRequest((r) => r.method() === "POST");
+  await page
+    .getByRole("button", { name: "Cancel linking", exact: true })
+    .click();
   const fields = new URLSearchParams((await request).postData());
   expect(fields.get("decision")).toBe("cancel");
   expect(fields.get("request_id")).toBe("request");
   expect(fields.get("csrf_token")).toBe("consent-csrf");
+});
+
+for (const revoked of [false, true]) {
+  test(`connected site ${
+    revoked ? "allow" : "revoke"
+  } submits with password and CSRF at 375px`, async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    const submitted = await render(page, {
+      page: "account",
+      profile: { email: "alice@example.com", full_name: "Alice" },
+      csrf_token: "csrf",
+      sessions: [],
+      connections: [
+        {
+          client: "site-one",
+          title: "Site One",
+          origin: "https://site.example",
+          revoked,
+        },
+      ],
+    });
+    const label = revoked ? "Allow future sign-ins" : "Revoke site access";
+    const form = page
+      .locator("form")
+      .filter({ has: page.getByRole("button", { name: label, exact: true }) });
+    await expect(form.getByRole("heading", { name: "Site One" })).toBeVisible();
+    if (revoked) await expect(form).toContainText("Access revoked.");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth
+      )
+    ).toBe(true);
+    await form
+      .getByLabel("Confirm your password", { exact: false })
+      .fill("fresh-password");
+    await form.locator("[name=password]").press("Enter");
+    await expect.poll(submitted).toEqual({
+      path: "/account",
+      fields: {
+        action: revoked ? "allow_site" : "revoke_site",
+        csrf_token: "csrf",
+        client: "site-one",
+        password: "fresh-password",
+      },
+    });
+  });
+}
+
+test("site picker filters known sites and never links revoked sites", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await render(page, {
+    page: "sites",
+    title: "Your sites",
+    sites: [
+      {
+        client: "one",
+        title: "First site",
+        origin: "https://first.example",
+        login_url: "https://first.example/passport/login",
+        revoked: false,
+      },
+      {
+        client: "two",
+        title: "Revoked site",
+        origin: "https://second.example",
+        login_url: null,
+        revoked: true,
+      },
+    ],
+  });
+  await expect(
+    page.getByRole("link", { name: "Open site", exact: true })
+  ).toHaveAttribute("href", "https://first.example/passport/login");
+  await expect(
+    page.getByRole("region", { name: "Revoked site" })
+  ).toContainText("Access revoked");
+  await expect(
+    page.getByRole("region", { name: "Revoked site" }).getByRole("link")
+  ).toHaveCount(0);
+  await page.getByLabel("Find a site").fill("Revoked");
+  await expect(page.getByRole("heading", { name: "First site" })).toHaveCount(
+    0
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth
+    )
+  ).toBe(true);
+  await page.getByLabel("Find a site").fill("missing");
+  await expect(
+    page.getByText("No matching sites.", { exact: true })
+  ).toBeVisible();
 });

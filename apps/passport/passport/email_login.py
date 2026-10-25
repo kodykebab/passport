@@ -40,7 +40,7 @@ def return_path(path):
 		url = urlsplit(path)
 	except ValueError:
 		return "/account"
-	if url.scheme or url.netloc or url.path not in ("/oidc/authorize", "/account"):
+	if url.scheme or url.netloc or url.path not in ("/oidc/authorize", "/account", "/sites"):
 		return "/account"
 	return path
 

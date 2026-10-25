@@ -31,3 +31,11 @@ Add opt-in email-verified signup for issuer-only identities under the [signup co
 ## Existing-account linking iteration
 
 Add opt-in linking of an existing enabled site account after fresh site-password verification, with no separate administrator approval. Require explicit issuer confirmation of the chosen identity and registered site. Keep local names, roles, accounts and existing links unchanged; do not match by email. The [linking contract](prebuild/account-linking-contract.md) defines session binding, replay/conflict handling and the distinct identity proof. No native framework/UI changes.
+
+## Connected-site management iteration
+
+Add issuer account controls for known authorized sites under the [connected-sites contract](prebuild/connected-sites-contract.md). Fresh-password revocation blocks new grants and renewals; allowing future sign-ins never revives old requests or sessions. Preserve site accounts, identity links and admission. Deployment clearance remains separate and pending.
+
+## Site-picker iteration
+
+Add authenticated site navigation under the [picker contract](prebuild/site-picker-contract.md), preserving site-owned admission.

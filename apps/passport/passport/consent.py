@@ -11,7 +11,7 @@ from passport_core.ui import render_page
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
-from passport import store
+from passport import connections, store
 
 PATH = "/passport/consent"
 
@@ -25,6 +25,7 @@ def page(client, args):
 			"user": frappe.session.user,
 			"issuer_sid": frappe.session.sid,
 			"client": client.name,
+			"connection_generation": connections.check(frappe.session.user, client.name),
 			"args": dict(args),
 			"exp": time.time() + 600,
 		},
@@ -73,6 +74,10 @@ def submit():
 		or row["issuer_sid"] != frappe.session.sid
 		or form.get("decision") not in ("allow", "cancel")
 	):
+		return invalid_consent()
+	try:
+		connections.check(row["user"], row["client"], row.get("connection_generation", 0))
+	except ValueError:
 		return invalid_consent()
 	client = frappe.db.get_value(
 		"Passport Client", {"name": row["client"], "enabled": 1}, ["name", "redirect_uri"], as_dict=True

@@ -12,7 +12,7 @@ from werkzeug.exceptions import Forbidden
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
-from passport import protocol, store
+from passport import connections, protocol, store
 
 
 def insert(session):
@@ -59,6 +59,8 @@ def response():
 			frappe.request.form.get("csrf_token", ""), frappe.session.data.csrf_token or ""
 		):
 			raise Forbidden("Invalid CSRF token")
+		if not store.get_valid_native_session(frappe.session.sid, user, lock=True):
+			raise Forbidden("This browser session has ended")
 		try:
 			confirm_password(user, frappe.form_dict.get("password", ""))
 		except frappe.AuthenticationError:
@@ -75,6 +77,11 @@ def response():
 			doc = frappe.get_doc("User", user)
 			doc.first_name, doc.middle_name, doc.last_name = name, "", ""
 			doc.save(ignore_permissions=True)
+		elif action in ("revoke_site", "allow_site"):
+			try:
+				connections.set_revoked(user, frappe.form_dict.get("client", ""), action == "revoke_site")
+			except ValueError:
+				raise Forbidden("Unknown connected site")
 		elif action in ("device", "everywhere"):
 			# Account lock serializes disablement and revocation with new lease issuance.
 			frappe.db.sql("SELECT name FROM tabUser WHERE name=%s FOR UPDATE", user)
@@ -114,6 +121,7 @@ def account_page(user, *, error=None, status=200):
 			"csrf_token": get_csrf_token(),
 			"profile": profile,
 			"sessions": sessions,
+			"connections": connections.sites(user),
 			"error": error,
 		},
 	)

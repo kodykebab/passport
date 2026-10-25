@@ -19,7 +19,7 @@ const vm = require('node:vm');
     body: {append: element => elements.set(element.id, element)}
   };
   const frappe = {
-    csrf_token: 'test-csrf', boot: {passport: {expires: 1100, account_url: 'http://id.localhost:8080/account', ui: {script: '/ui.js', style: '/ui.css'}}},
+    csrf_token: 'test-csrf', boot: {passport: {expires: 1100, account_url: 'http://id.localhost:8080/account', sites_url: 'http://id.localhost:8080/sites', ui: {script: '/ui.js', style: '/ui.css'}}},
     realtime: {socket: {connected: false, connect: () => reconnects++}},
     session: {user: 'alice@example.com'}, avatar: () => '',
     utils: {is_rtl: () => false},
@@ -69,6 +69,9 @@ const vm = require('node:vm');
   const links = renderedMenu.filter(item => item.label === 'Frappe ID account');
   assert.equal(links.length, 1);
   assert.equal(links[0].url, frappe.boot.passport.account_url);
+  const picker = renderedMenu.filter(item => item.label === 'Switch site');
+  assert.equal(picker.length, 1);
+  assert.equal(picker[0].url, frappe.boot.passport.sites_url);
   let recoveryLocation;
   context.loadUI = async () => { throw new Error('Asset unavailable'); };
   context.window.location.assign = path => { recoveryLocation = path; };
