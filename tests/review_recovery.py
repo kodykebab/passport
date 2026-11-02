@@ -10,20 +10,26 @@ from unittest.mock import patch
 import frappe
 from live_support import ID, SITE, USER, BrowserSessions, check, db
 from passport import account
+from passport_core.store import native_session_id
 
 with BrowserSessions() as sessions:
 	for cached in (True, False):
 		browser, csrf, sid = sessions.login()
 		with db():
-			data = json.loads(frappe.db.sql("SELECT sessiondata FROM tabSessions WHERE sid=%s", sid)[0][0])
+			stored_sid = native_session_id(sid)
+			data = json.loads(
+				frappe.db.sql("SELECT sessiondata FROM tabSessions WHERE sid=%s", stored_sid)[0][0]
+			)
 			data["session_end"] = datetime.fromtimestamp(time.time() - 1, timezone.utc).isoformat()
-			frappe.db.sql("UPDATE tabSessions SET sessiondata=%s WHERE sid=%s", (json.dumps(data), sid))
+			frappe.db.sql(
+				"UPDATE tabSessions SET sessiondata=%s WHERE sid=%s", (json.dumps(data), stored_sid)
+			)
 			if cached:
-				entry = frappe.cache.hget("session", sid)
-				entry["data"]["session_end"] = data["session_end"]
-				frappe.cache.hset("session", sid, entry)
+				entry = frappe.cache.hget("session", stored_sid)
+				entry["session_end"] = data["session_end"]
+				frappe.cache.hset("session", stored_sid, entry)
 			else:
-				frappe.cache.hdel("session", sid)
+				frappe.cache.hdel("session", stored_sid)
 		# Reject the original protected operation; never retry it after authentication.
 		response = browser.post(
 			SITE + "/api/method/frappe.client.insert", json={"doc": {}}, headers={"X-Frappe-CSRF-Token": csrf}
@@ -95,7 +101,7 @@ with BrowserSessions() as sessions:
 				doc.enabled = 1
 				doc.save(ignore_permissions=True)
 			if not cached:
-				frappe.cache.hdel("session", sid)
+				frappe.cache.hdel("session", native_session_id(sid))
 		response = browser.get(ID + "/api/method/frappe.auth.get_logged_user")
 		check(
 			"issuer revoked cookie denied ordinary API (cache=" + str(cached) + ")",

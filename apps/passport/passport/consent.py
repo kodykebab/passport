@@ -7,25 +7,29 @@ from urllib.parse import urlencode, urlsplit
 
 import frappe
 from frappe.sessions import get_csrf_token
+from passport_core.store import native_session_id
 from passport_core.ui import render_page
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
-from passport import connections, store
+from passport import connections, registration, store
 
 PATH = "/passport/consent"
 
 
 def page(client, args):
+	generation = connections.check(frappe.session.user, client.name)
+	revision = registration.check(client.name, client.registration_revision)
 	request_id = secrets.token_urlsafe(32)
 	store.create(
 		"link_consent",
 		request_id,
 		{
 			"user": frappe.session.user,
-			"issuer_sid": frappe.session.sid,
+			"issuer_sid": native_session_id(frappe.session.sid),
 			"client": client.name,
-			"connection_generation": connections.check(frappe.session.user, client.name),
+			"registration_revision": revision,
+			"connection_generation": generation,
 			"args": dict(args),
 			"exp": time.time() + 600,
 		},
@@ -71,7 +75,7 @@ def submit():
 		or row.get("spent")
 		or row["exp"] <= time.time()
 		or row["user"] != frappe.session.user
-		or row["issuer_sid"] != frappe.session.sid
+		or row["issuer_sid"] != native_session_id(frappe.session.sid)
 		or form.get("decision") not in ("allow", "cancel")
 	):
 		return invalid_consent()
@@ -80,9 +84,16 @@ def submit():
 	except ValueError:
 		return invalid_consent()
 	client = frappe.db.get_value(
-		"Passport Client", {"name": row["client"], "enabled": 1}, ["name", "redirect_uri"], as_dict=True
+		"Passport Client",
+		{"name": row["client"], "enabled": 1},
+		["name", "redirect_uri", "registration_revision"],
+		as_dict=True,
 	)
 	if not client or client.redirect_uri != row["args"]["redirect_uri"]:
+		return invalid_consent()
+	try:
+		registration.check(client.name, row.get("registration_revision"))
+	except ValueError:
 		return invalid_consent()
 	row["spent"] = True
 	store.put("link_consent", key, row)

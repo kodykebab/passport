@@ -1,8 +1,8 @@
 """Verified issuer-only registration; never provision client access."""
 
 import frappe
-from frappe.auth import MAX_PASSWORD_SIZE
 from frappe.core.doctype.user.user import test_password_strength
+from passport_core.password import MAX_PASSWORD_SIZE
 
 from passport import deletion, protocol, store
 

@@ -1,8 +1,8 @@
 diff --git a/frappe/app.py b/frappe/app.py
-index 7f4e4bc..22eb09b 100644
+index 3e9b82fbca..0eca22432c 100644
 --- a/frappe/app.py
 +++ b/frappe/app.py
-@@ -103,7 +103,16 @@ def application(request: Request):
+@@ -115,7 +115,16 @@ def application(request: Request):
  
  		validate_auth()
  
@@ -20,7 +20,7 @@ index 7f4e4bc..22eb09b 100644
  			response = Response()
  
  		elif frappe.form_dict.cmd:
-@@ -202,6 +211,9 @@ def init_request(request):
+@@ -213,6 +222,9 @@ def init_request(request):
  		request.max_content_length = cint(frappe.local.conf.get("max_file_size")) or 25 * 1024 * 1024
  	make_form_dict(request)
  
@@ -30,11 +30,11 @@ index 7f4e4bc..22eb09b 100644
  	if request.method != "OPTIONS":
  		frappe.local.http_request = HTTPRequest()
  
-diff --git a/frappe/realtime.py b/frappe/realtime.py
-index 7e8e31f..40f7724 100644
---- a/frappe/realtime.py
-+++ b/frappe/realtime.py
-@@ -149,7 +149,13 @@ def get_user_info():
+diff --git a/frappe/realtime/__init__.py b/frappe/realtime/__init__.py
+index 30508b210e..8e4bb8b649 100644
+--- a/frappe/realtime/__init__.py
++++ b/frappe/realtime/__init__.py
+@@ -157,7 +157,13 @@ def get_user_info():
  	# For requests with Bearer tokens, user_type is not set in the session data
  	if not user_type:
  		user_type = frappe.get_cached_value("User", frappe.session.user, "user_type")
@@ -48,11 +48,204 @@ index 7e8e31f..40f7724 100644
  		"user": frappe.session.user,
  		"user_type": user_type,
  		"installed_apps": frappe.get_installed_apps(),
+diff --git a/frappe/realtime/auth.py b/frappe/realtime/auth.py
+index 810afe8e7e..64c64e8d7c 100644
+--- a/frappe/realtime/auth.py
++++ b/frappe/realtime/auth.py
+@@ -4,6 +4,8 @@
+ import asyncio
+ import json
+ import logging
++import math
++import time
+ from collections.abc import Awaitable, Callable
+ from dataclasses import dataclass, field
+ from http.cookiejar import CookieJar
+@@ -57,6 +59,41 @@ class Session:
+ 	installed_apps: list[str]
+ 	request: WebRequest  # authenticated client toward the web process
+ 	data: dict = field(default_factory=dict)
++	deadline: float | None = None
++	validation_task: asyncio.Task | None = field(default=None, repr=False)
++
++	@property
++	def is_expired(self) -> bool:
++		return self.deadline is not None and time.monotonic() >= self.deadline
++
++	def update_deadline(self, user_info: dict, started: float) -> None:
++		ttl = user_info.get("passport_ttl")
++		if ttl is None and self.deadline is None:
++			return
++		if (
++			self.is_expired
++			or user_info.get("user") != self.user
++			or type(ttl) not in (int, float)
++			or not math.isfinite(ttl)
++			or started + ttl <= time.monotonic()
++		):
++			raise ConnectionRefusedError("Expired session")
++		self.deadline = started + ttl
++
++	async def validate_until_disconnect(self, sio, sid: str, namespace: str) -> None:
++		try:
++			while self.deadline is not None:
++				await asyncio.sleep(max(0, min(10, self.deadline - time.monotonic())))
++				if self.is_expired:
++					break
++				started = time.monotonic()
++				async with asyncio.timeout(min(5, self.deadline - started)):
++					response = await self.request("/api/method/frappe.realtime.get_user_info")
++				self.update_deadline(response.get("message") or {}, started)
++		except Exception:
++			# Authority could not be re-established before the existing deadline.
++			pass
++		await sio.disconnect(sid, namespace=namespace)
+ 
+ 	async def get(self, path: str, params: dict | None = None) -> dict:
+ 		return await self.send_request(path, "GET", params=params)
+@@ -82,7 +119,12 @@ class Session:
+ 		method: HTTP verb. params: query string. body: JSON body.
+ 		Prefer get/post/put/delete for the common cases.
+ 		"""
+-		return await self.request(path, method=method, params=params, body=body)
++		if self.is_expired:
++			raise ConnectionRefusedError("Expired session")
++		response = await self.request(path, method=method, params=params, body=body)
++		if self.is_expired:
++			raise ConnectionRefusedError("Expired session")
++		return response
+ 
+ 	async def has_permission(self, doctype: str, name: str | None = None, ptype: str = "read") -> bool:
+ 		"""HTTP permission check against the web process (no DB in realtime)."""
+@@ -108,9 +150,11 @@ async def authenticate(environ: dict, namespace: str, config: RealtimeConfig) ->
+ 
+ 	secret = await get_socketio_secret(config.redis_queue)
+ 	request = _make_request(environ, credentials, config, site, secret)
++	started = time.monotonic()
+ 	user_info = await _get_user_info(request)
+-
+-	return _make_session(site, user_info, request)
++	session = _make_session(site, user_info, request)
++	session.update_deadline(user_info, started)
++	return session
+ 
+ 
+ def _reject(reason: str, message: str) -> NoReturn:
+diff --git a/frappe/realtime/dispatch.py b/frappe/realtime/dispatch.py
+index 8b1b1573d2..2be09d58c7 100644
+--- a/frappe/realtime/dispatch.py
++++ b/frappe/realtime/dispatch.py
+@@ -26,6 +26,8 @@ import logging
+ from collections.abc import Callable, Coroutine
+ from typing import TYPE_CHECKING
+ 
++from socketio.exceptions import ConnectionRefusedError
++
+ from frappe.realtime.auth import authenticate
+ from frappe.realtime.config import RealtimeConfig
+ from frappe.realtime.context import frappe_context
+@@ -82,6 +84,9 @@ async def _run_handlers(
+ 
+ 	result = None
+ 	for handler in handlers:
++		if event != "disconnect" and session.is_expired:
++			await sio.disconnect(sid, namespace=namespace)
++			return
+ 		if handler.app not in socket.installed_apps:
+ 			continue
+ 		if socket.user == "Guest" and not handler.allow_guest:
+@@ -93,6 +98,9 @@ async def _run_handlers(
+ 			continue
+ 		if value is not None:
+ 			result = value
++	if event != "disconnect" and session.is_expired:
++		await sio.disconnect(sid, namespace=namespace)
++		return
+ 	return result
+ 
+ 
+@@ -108,10 +116,28 @@ def wire(sio: AsyncServer, config: RealtimeConfig) -> None:
+ 
+ 	async def connect(namespace: str, sid: str, environ: dict, auth: object | None = None) -> None:
+ 		session = await authenticate(environ, namespace, config)
++		try:
++			previous = await sio.get_session(sid, namespace=namespace)
++		except KeyError:
++			previous = None
++		if isinstance(previous, type(session)) and previous.validation_task:
++			previous.validation_task.cancel()
+ 		await sio.save_session(sid, session, namespace=namespace)
++		if session.deadline is not None:
++			session.validation_task = asyncio.create_task(
++				session.validate_until_disconnect(sio, sid, namespace)
++			)
+ 		await _run_handlers(sio, "connect", namespace, sid, ())
++		if session.is_expired:
++			raise ConnectionRefusedError("Expired session")
+ 
+ 	async def disconnect(namespace: str, sid: str, reason: object | None = None) -> None:
++		try:
++			session = await sio.get_session(sid, namespace=namespace)
++		except KeyError:
++			return
++		if session.validation_task and session.validation_task is not asyncio.current_task():
++			session.validation_task.cancel()
+ 		# socketio 5.11+ passes a disconnect reason; accept and ignore it so the
+ 		# handler binds directly instead of relying on the library's TypeError retry.
+ 		await _run_handlers(sio, "disconnect", namespace, sid, ())
+diff --git a/frappe/realtime/server.py b/frappe/realtime/server.py
+index 759160fa1a..6171e8200d 100644
+--- a/frappe/realtime/server.py
++++ b/frappe/realtime/server.py
+@@ -57,6 +57,21 @@ class TolerantManager(socketio.AsyncManager):
+ 	async def connect(self, eio_sid: str, namespace: str) -> str | None:
+ 		return await super().connect(eio_sid, namespace) or self.sid_from_eio_sid(eio_sid, namespace)
+ 
++	async def emit(self, event, data, namespace, room=None, skip_sid=None, callback=None, to=None, **kwargs):
++		if namespace not in self.rooms:
++			return
++		room = to or room
++		skipped = list(skip_sid) if isinstance(skip_sid, list) else [skip_sid] if skip_sid else []
++		for sid, _ in list(self.get_participants(namespace, room)):
++			try:
++				session = await self.server.get_session(sid, namespace=namespace)
++			except KeyError:
++				skipped.append(sid)
++				continue
++			if session.is_expired:
++				skipped.append(sid)
++		await super().emit(event, data, namespace, room=room, skip_sid=skipped, callback=callback, **kwargs)
++
+ 
+ def create_sio() -> socketio.AsyncServer:
+ 	"""Build the asgi-mode Socket.IO server.
+diff --git a/frappe/realtime/socket.py b/frappe/realtime/socket.py
+index d01c09070d..77fb96dc45 100644
+--- a/frappe/realtime/socket.py
++++ b/frappe/realtime/socket.py
+@@ -59,7 +59,7 @@ class Socket:
+ 		(eio_sid resolves to None). Re-check before any sio call that would raise;
+ 		mutating a gone socket is a no-op. Safe against TOCTOU because the guarded
+ 		call does not yield the loop before it reads the manager."""
+-		return self._sio.manager.is_connected(self.sid, self.namespace)
++		return not self._session.is_expired and self._sio.manager.is_connected(self.sid, self.namespace)
+ 
+ 	async def join(self, room: str) -> None:
+ 		if not self._connected():
+@@ -74,6 +74,8 @@ class Socket:
+ 
+ 	async def emit(self, event: str, data: object | None = None, room: str | None = None) -> None:
+ 		"""Emit to a room, or to this client (default)."""
++		if self._session.is_expired:
++			return
+ 		await self._sio.emit(event, data, to=room or self.sid, namespace=self.namespace)
+ 
+ 	def get(self, key: str, default: object = None) -> object:
 diff --git a/frappe/sessions.py b/frappe/sessions.py
-index e87e6b5..23f1535 100644
+index 7b1d2dc6cf..9f04495ee6 100644
 --- a/frappe/sessions.py
 +++ b/frappe/sessions.py
-@@ -94,6 +94,12 @@ def delete_session(sid=None, user=None, reason="Session Expired"):
+@@ -93,6 +93,12 @@ def delete_session(sid=None, user=None, reason="Session Expired"):
  		if user_details:
  			user = user_details[0].get("user")
  
@@ -65,7 +258,7 @@ index e87e6b5..23f1535 100644
  	logout_feed(user, reason)
  	frappe.db.delete("Sessions", {"sid": sid})
  	frappe.db.commit(chain=True)
-@@ -277,6 +283,15 @@ class Session:
+@@ -285,6 +291,15 @@ class Session:
  				}
  			)
  
@@ -81,8 +274,8 @@ index e87e6b5..23f1535 100644
  		# insert session
  		if self.user != "Guest":
  			self.insert_session_record()
-@@ -354,6 +369,9 @@ class Session:
- 		if not data:
+@@ -358,6 +373,9 @@ class Session:
+ 		if not (data and data.get("user")):
  			self._update_in_cache = True
  			data = self.get_session_data_from_db()
 +		for hook in frappe.get_hooks("validate_native_session"):
@@ -91,7 +284,7 @@ index e87e6b5..23f1535 100644
  		return data
  
  	def get_session_data_from_cache(self):
-@@ -390,6 +408,9 @@ class Session:
+@@ -394,6 +412,9 @@ class Session:
  		if record:
  			data = frappe.parse_json(record[0][1] or "{}")
  			data.user = record[0][0]
@@ -101,54 +294,65 @@ index e87e6b5..23f1535 100644
  		else:
  			self._delete_session()
  			data = None
-@@ -407,7 +428,7 @@ class Session:
+@@ -411,7 +432,8 @@ class Session:
  	def update(self, force=False):
  		"""extend session expiry"""
  
 -		if frappe.session.user == "Guest":
-+		if frappe.session.user == "Guest" or frappe.flags.get("passport_background"):
++		background = frappe.flags.get("passport_background")
++		if frappe.session.user == "Guest" or (background and not force):
  			return
  
  		now = frappe.utils.now_datetime()
-@@ -423,6 +444,11 @@ class Session:
+@@ -427,23 +449,32 @@ class Session:
  		if (
  			force or (time_diff is None) or (time_diff > threshold) or self._update_in_cache
  		) and not frappe.flags.read_only:
+-			self.data.data.last_updated = now
+-			self.data.data.lang = str(frappe.lang)
+-			self.data.data.session_ip = frappe.local.request_ip
 +			# User -> native session, also when invoked after the HTTP response.
 +			enabled = frappe.db.sql("SELECT enabled FROM tabUser WHERE name=%s FOR UPDATE", self.user)
 +			current = frappe.db.sql("SELECT user FROM tabSessions WHERE sid=%s FOR UPDATE", self.sid)
 +			if not enabled or not enabled[0][0] or not current or current[0][0] != self.user:
 +				return False
- 			self.data.data.last_updated = now
- 			self.data.data.lang = str(frappe.lang)
- 			self.data.data.session_ip = frappe.local.request_ip
-diff --git a/realtime/index.js b/realtime/index.js
-index f333710..8ce41d3 100644
---- a/realtime/index.js
-+++ b/realtime/index.js
-@@ -28,6 +28,13 @@ realtime.use(authenticate);
- // =======================
++			if not background:
++				self.data.data.last_updated = now
++				self.data.data.lang = str(frappe.lang)
++				self.data.data.session_ip = frappe.local.request_ip
  
- function on_connection(socket) {
-+	if (socket.passport_permitted) {
-+		const write = socket.client.writeToEngine.bind(socket.client);
-+		socket.client.writeToEngine = (...args) => {
-+			if (socket.passport_permitted()) return write(...args);
-+			// Drop packets after expiry; the deadline timer closes the transport.
-+		};
-+	}
- 	socket.installed_apps.forEach((app) => {
- 		let app_handler = get_app_handlers(app);
- 		try {
+ 			Sessions = frappe.qb.DocType("Sessions")
+ 			# update sessions table
+-			(
++			query = (
+ 				frappe.qb.update(Sessions)
+ 				.where(Sessions.sid == self.data["sid"])
+ 				.set(
+ 					Sessions.sessiondata,
+ 					frappe.as_json(self.data["data"], indent=None, separators=(",", ":")),
+ 				)
+-				.set(Sessions.lastupdate, now)
+-			).run()
++			)
++			if not background:
++				query = query.set(Sessions.lastupdate, now)
++			query.run()
+ 
+-			update_user_metadata(frappe.session.user, last_active=now, last_ip=frappe.local.request_ip)
++			if not background:
++				update_user_metadata(frappe.session.user, last_active=now, last_ip=frappe.local.request_ip)
+ 
+ 			frappe.db.commit(chain=True)
+ 			updated_in_db = True
 diff --git a/realtime/middlewares/authenticate.js b/realtime/middlewares/authenticate.js
-index e2c9d57..0af1f80 100644
+index 6539977779..311a4d0740 100644
 --- a/realtime/middlewares/authenticate.js
 +++ b/realtime/middlewares/authenticate.js
 @@ -1,4 +1,5 @@
  const cookie = require("cookie");
 +const { performance } = require("node:perf_hooks");
  const { get_conf, get_redis_subscriber } = require("../../node_utils");
- const { get_url } = require("../utils");
+ const { get_url, get_hostname } = require("../utils");
  const conf = get_conf();
 @@ -16,6 +17,7 @@ function authenticate_with_frappe(socket, next) {
  
@@ -158,39 +362,238 @@ index e2c9d57..0af1f80 100644
  	}
  
  	if (get_hostname(socket.request.headers.host) != get_hostname(socket.request.headers.origin)) {
-@@ -64,6 +66,7 @@ function authenticate_with_frappe(socket, next) {
+@@ -66,6 +68,7 @@ function authenticate_with_frappe(socket, next) {
  		});
  	};
  
-+	const authStarted = performance.now();
++	const authentication_started = performance.now();
  	socket
  		.frappe_request("/api/method/frappe.realtime.get_user_info")
  		.then((res) => res.json())
-@@ -76,6 +79,27 @@ function authenticate_with_frappe(socket, next) {
+@@ -78,6 +81,64 @@ function authenticate_with_frappe(socket, next) {
  				message = retry_data.message;
  			}
  
 +			if (message.passport_ttl != null) {
-+				let deadline = authStarted + Math.max(0, message.passport_ttl * 1000);
++				let deadline = authentication_started + Math.max(0, message.passport_ttl * 1000);
 +				const permitted = () => performance.now() < deadline;
-+				socket.passport_permitted = permitted;
-+				let timer = setTimeout(() => socket.disconnect(true), Math.max(0, deadline - performance.now()));
-+				const emit = socket.emit.bind(socket);
-+				socket.emit = (...args) => { if (permitted()) return emit(...args); socket.disconnect(true); };
-+				socket.use((packet, done) => permitted() ? done() : socket.disconnect(true));
++				if (!Number.isFinite(message.passport_ttl) || !permitted()) {
++					throw new Error("Expired session");
++				}
++				let timer = setTimeout(
++					() => socket.disconnect(true),
++					Math.max(0, deadline - performance.now())
++				);
++				socket.onAnyOutgoing(() => {
++					if (!permitted()) socket.disconnect(true);
++				});
++				socket.use((packet, done) => {
++					if (!permitted()) return socket.disconnect(true);
++					const last = packet.length - 1;
++					const acknowledge = packet[last];
++					if (typeof acknowledge === "function") {
++						packet[last] = (...args) => {
++							if (permitted()) acknowledge(...args);
++							else socket.disconnect(true);
++						};
++					}
++					done();
++				});
 +				const interval = setInterval(async () => {
 +					try {
-+						const checkStarted = performance.now();
-+						const res = await socket.frappe_request("/api/method/frappe.realtime.get_user_info", {}, {signal: AbortSignal.timeout(5000)});
-+						const {message: state} = await res.json();
-+						if (!res.ok || !state || state.user !== socket.user || state.passport_ttl == null || !permitted()) return socket.disconnect(true);
-+						deadline = checkStarted + Math.max(0, state.passport_ttl * 1000);
++						const check_started = performance.now();
++						const response = await socket.frappe_request(
++							"/api/method/frappe.realtime.get_user_info",
++							{},
++							{ signal: AbortSignal.timeout(5000) }
++						);
++						const { message: state } = await response.json();
++						if (
++							!response.ok ||
++							!state ||
++							state.user !== socket.user ||
++							!Number.isFinite(state.passport_ttl) ||
++							!permitted()
++						) {
++							return socket.disconnect(true);
++						}
++						deadline = check_started + Math.max(0, state.passport_ttl * 1000);
 +						clearTimeout(timer);
-+						timer = setTimeout(() => socket.disconnect(true), Math.max(0, deadline - performance.now()));
-+					} catch (_) { socket.disconnect(true); }
++						timer = setTimeout(
++							() => socket.disconnect(true),
++							Math.max(0, deadline - performance.now())
++						);
++					} catch (_) {
++						socket.disconnect(true);
++					}
 +				}, 10000);
-+				socket.on("disconnect", () => { clearTimeout(timer); clearInterval(interval); });
++				socket.on("disconnect", () => {
++					clearTimeout(timer);
++					clearInterval(interval);
++				});
 +			}
  			socket.user = message.user;
  			socket.user_type = message.user_type;
  			socket.installed_apps = message.installed_apps || [];
+diff --git a/frappe/tests/test_realtime_session.py b/frappe/tests/test_realtime_session.py
+new file mode 100644
+index 0000000000..82ab5d9c91
+--- /dev/null
++++ b/frappe/tests/test_realtime_session.py
+@@ -0,0 +1,156 @@
++import asyncio
++import time
++import unittest
++from unittest.mock import AsyncMock, patch
++
++from socketio.exceptions import ConnectionRefusedError
++
++from frappe.realtime import dispatch
++from frappe.realtime.registry import Registry
++from frappe.realtime.server import create_sio
++from frappe.tests.test_realtime_py import FakeSio, make_config, make_session
++
++
++class TestRealtimeSession(unittest.IsolatedAsyncioTestCase):
++	def test_native_session_has_no_federation_deadline(self):
++		session = make_session()
++		session.update_deadline({"user": session.user}, time.monotonic())
++		self.assertIsNone(session.deadline)
++		self.assertFalse(session.is_expired)
++
++	def test_initial_deadline_includes_authentication_latency(self):
++		session = make_session()
++		with self.assertRaises(ConnectionRefusedError):
++			session.update_deadline({"user": session.user, "passport_ttl": 1}, time.monotonic() - 2)
++
++	def test_invalid_or_missing_deadline_cannot_renew_federation(self):
++		for ttl in (None, 0, -1, True, "30", float("nan"), float("inf")):
++			with self.subTest(ttl=ttl):
++				session = make_session()
++				session.deadline = time.monotonic() + 30
++				previous = session.deadline
++				with self.assertRaises(ConnectionRefusedError):
++					session.update_deadline({"user": session.user, "passport_ttl": ttl}, time.monotonic())
++				self.assertEqual(session.deadline, previous)
++
++	def test_changed_user_or_expired_response_cannot_renew(self):
++		for deadline, user in ((time.monotonic() + 30, "another@example.com"), (0, "a@b.com")):
++			session = make_session()
++			session.deadline = deadline
++			with self.assertRaises(ConnectionRefusedError):
++				session.update_deadline({"user": user, "passport_ttl": 60}, time.monotonic())
++
++	async def test_idle_socket_disconnects_at_deadline(self):
++		session = make_session(request=AsyncMock())
++		session.deadline = time.monotonic() + 0.02
++		sio = AsyncMock()
++		await asyncio.wait_for(session.validate_until_disconnect(sio, "sid", "/s1"), timeout=1)
++		sio.disconnect.assert_awaited_once_with("sid", namespace="/s1")
++		session.request.assert_not_awaited()
++
++	async def test_authority_failure_disconnects(self):
++		for result in ({"message": {"user": "Guest"}}, OSError("unavailable")):
++			with self.subTest(result=result):
++				request = AsyncMock()
++				if isinstance(result, Exception):
++					request.side_effect = result
++				else:
++					request.return_value = result
++				session = make_session(request=request)
++				session.deadline = time.monotonic() + 30
++				sio = AsyncMock()
++				with patch("frappe.realtime.auth.asyncio.sleep", new=AsyncMock()):
++					await session.validate_until_disconnect(sio, "sid", "/s1")
++				sio.disconnect.assert_awaited_once()
++
++	async def test_response_after_expiry_is_not_returned(self):
++		session = make_session()
++
++		async def slow_response(*args, **kwargs):
++			session.deadline = 0
++			return {"private": "value"}
++
++		session.request = slow_response
++		session.deadline = time.monotonic() + 30
++		with self.assertRaises(ConnectionRefusedError):
++			await session.get("/protected")
++
++	async def test_handler_expiring_during_work_cannot_acknowledge_or_emit(self):
++		session = make_session()
++		session.deadline = time.monotonic() + 30
++		sio = FakeSio()
++		sio.sessions["sid"] = session
++		sio.disconnect = AsyncMock()
++		registry = Registry()
++
++		async def handler(socket):
++			session.deadline = 0
++			await socket.emit("private", {"secret": "fixture"})
++			return {"secret": "fixture"}
++
++		registry.on("private")(handler)
++		with patch.object(dispatch, "realtime", registry):
++			result = await dispatch._run_handlers(sio, "private", "/s1", "sid", ())
++		self.assertIsNone(result)
++		self.assertEqual(sio.emits, [])
++		sio.disconnect.assert_awaited_once()
++
++	async def test_room_delivery_filters_expired_recipients(self):
++		sio = create_sio()
++		sessions = {name: make_session() for name in ("native", "active", "expired")}
++		sessions["active"].deadline = time.monotonic() + 30
++		sessions["expired"].deadline = 0
++		for sid in sessions:
++			sio.manager.basic_enter_room(sid, "/s1", None, eio_sid="engine-" + sid)
++			sio.manager.basic_enter_room(sid, "/s1", "room")
++		sio.get_session = AsyncMock(side_effect=lambda sid, namespace: sessions[sid])
++		sio._send_eio_packet = AsyncMock()
++		await sio.emit("private", {"value": "fixture"}, to="room", namespace="/s1")
++		self.assertEqual(
++			{call.args[0] for call in sio._send_eio_packet.await_args_list},
++			{"engine-native", "engine-active"},
++		)
++
++	async def test_disconnect_cancels_revalidation(self):
++		sio = FakeSio()
++		session = make_session()
++		session.validation_task = asyncio.create_task(asyncio.sleep(60))
++		sio.sessions["sid"] = session
++		dispatch.wire(sio, make_config())
++		await sio.handlers["disconnect"]("/s1", "sid")
++		with self.assertRaises(asyncio.CancelledError):
++			await session.validation_task
++
++	async def test_expiry_during_connect_cannot_accept_handshake(self):
++		sio = FakeSio()
++		sio.disconnect = AsyncMock()
++		session = make_session()
++		registry = Registry()
++
++		async def connect(socket):
++			session.deadline = 0
++
++		registry.on("connect")(connect)
++		with (
++			patch.object(dispatch, "realtime", registry),
++			patch.object(dispatch, "authenticate", new=AsyncMock(return_value=session)),
++		):
++			dispatch.wire(sio, make_config())
++			with self.assertRaises(ConnectionRefusedError):
++				await sio.handlers["connect"]("/s1", "sid", {})
++
++	async def test_reconnect_cancels_the_previous_validation_task(self):
++		sio = FakeSio()
++		previous = make_session()
++		previous.validation_task = asyncio.create_task(asyncio.sleep(60))
++		sio.sessions["sid"] = previous
++		current = make_session()
++		with (
++			patch.object(dispatch, "realtime", Registry()),
++			patch.object(dispatch, "authenticate", new=AsyncMock(return_value=current)),
++		):
++			dispatch.wire(sio, make_config())
++			await sio.handlers["connect"]("/s1", "sid", {})
++		self.assertIs(sio.sessions["sid"], current)
++		with self.assertRaises(asyncio.CancelledError):
++			await previous.validation_task

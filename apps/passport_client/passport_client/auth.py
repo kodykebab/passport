@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 import frappe
 import jwt
 import requests
+from passport_core.store import native_session_id
 from passport_core.ui import assets, render_page
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
@@ -42,7 +43,7 @@ def safe_redirect(path):
 		and not path.startswith("//")
 		and "\\" not in path
 		and not any(ord(c) < 32 for c in path)
-		else "/desk"
+		else "/login"
 	)
 
 
@@ -160,7 +161,10 @@ def callback():
 		raise PassportError("This login attempt has expired or belongs to another browser.")
 	linking = attempt.get("action") == "link"
 	if linking:
-		if frappe.session.user != attempt["user"] or frappe.session.sid != attempt["local_sid"]:
+		if (
+			frappe.session.user != attempt["user"]
+			or native_session_id(frappe.session.sid) != attempt["local_sid"]
+		):
 			raise PassportError("The local session changed. Start linking again.")
 	elif frappe.session.user != "Guest":
 		raise PassportError("A local session is already active. Log out before starting another login.")
@@ -195,11 +199,22 @@ def callback():
 	if linking:
 		from passport_client.linking import finish
 
-		return finish(attempt, claims)
+		return finish(attempt, claims, attempt_id=key)
 	user = resolve_user(c.issuer, claims)
+	association = frappe.db.get_value(
+		"Passport Identity",
+		{"issuer": c.issuer, "subject": claims["sub"], "user": user},
+		["name", "access_epoch"],
+		as_dict=True,
+	)
+	if not association or not association.access_epoch:
+		raise PassportError("This identity association is unavailable. Start a new login.")
 	binding = secrets.token_hex(24)
 	deadline = claims["issuer_session_expires_at"]
 	frappe.flags.passport_pending = {
+		"installation": frappe.conf.get("passport_installation"),
+		"association_id": association.name,
+		"access_epoch": association.access_epoch,
 		"protocol_sid": claims["sid"],
 		"binding": binding,
 		"user": user,
@@ -229,20 +244,36 @@ def callback():
 	return redirect(attempt["return"])
 
 
-def session_page(title, message, link, link_label, *, status=200, csrf_token=None):
-	html = render_page(
-		"passport_client",
-		"Frappe ID",
-		{
-			"page": "session",
-			"title": title,
-			"message": message,
-			"link": link,
-			"link_label": link_label,
-			"csrf_token": csrf_token,
-		},
-	)
-	return Response(html, status=status, content_type="text/html", headers={"Cache-Control": "no-store"})
+def session_page(title, message, link, link_label, *, status=200, csrf_token=None, logout=False):
+	headers = {
+		"Cache-Control": "no-store",
+		"Referrer-Policy": "no-referrer",
+		"X-Content-Type-Options": "nosniff",
+	}
+	try:
+		html = render_page(
+			"passport_client",
+			"Frappe ID",
+			{
+				"page": "session",
+				"title": title,
+				"message": message,
+				"link": link,
+				"link_label": link_label,
+				"csrf_token": csrf_token,
+				"logout": logout,
+			},
+		)
+	except FileNotFoundError:
+		if status < 400:
+			raise
+		return Response(
+			"Sign-in could not be completed. Please try again later.",
+			status=status,
+			content_type="text/plain; charset=utf-8",
+			headers=headers,
+		)
+	return Response(html, status=status, content_type="text/html", headers=headers)
 
 
 def response():
@@ -253,13 +284,20 @@ def response():
 		"/passport/retry",
 		"/passport/status",
 		"/passport/link",
+		"/passport/invitation",
 	):
 		return None
 	if frappe.request.method not in (
-		("GET", "POST") if path == "/passport/link" else ("POST" if path == "/passport/retry" else "GET",)
+		("GET", "POST")
+		if path in ("/passport/link", "/passport/invitation")
+		else ("POST" if path == "/passport/retry" else "GET",)
 	):
 		return Response(status=405)
 	try:
+		if path == "/passport/invitation":
+			from passport_client.invitation_page import response as invitation_response
+
+			return invitation_response()
 		if path == "/passport/link":
 			from passport_client.linking import response as link_response
 
@@ -273,7 +311,7 @@ def response():
 			return session_page(
 				"Validate session",
 				"Validation does not replay interrupted actions.",
-				"/desk",
+				"/login",
 				"Return to site",
 				csrf_token=get_csrf_token(),
 			)
@@ -282,7 +320,7 @@ def response():
 
 			expires = renew()
 			if frappe.request.form.get("response_format") == "html":
-				result = redirect("/desk", code=303)
+				result = redirect("/login", code=303)
 				result.headers["Cache-Control"] = "no-store"
 				return result
 			return Response(
@@ -296,6 +334,7 @@ def response():
 		return result
 	except (
 		PassportError,
+		frappe.PermissionError,
 		requests.RequestException,
 		jwt.InvalidTokenError,
 		ValueError,
@@ -309,6 +348,18 @@ def response():
 			if isinstance(e, PassportError)
 			else "Could not complete Frappe ID validation. Start a new login."
 		)
+		if path == "/passport/retry" and frappe.session.user != "Guest":
+			from frappe.sessions import get_csrf_token
+
+			return session_page(
+				"Validation failed",
+				message,
+				"/login",
+				"Log out and return to login",
+				status=403,
+				csrf_token=get_csrf_token(),
+				logout=True,
+			)
 		return session_page("Login failed", message, "/login", "Back to login", status=403)
 
 
@@ -324,7 +375,7 @@ def update_login_context(context):
 def extend_bootinfo(bootinfo):
 	if frappe.conf.get("passport_allow_linking"):
 		bootinfo.passport_link_url = "/passport/link"
-	row = store.get("federation", frappe.session.sid)
+	row = store.get("federation", native_session_id(frappe.session.sid))
 	if row and not row["revoked"]:
 		bootinfo.passport = {
 			"account_url": config().issuer + "/account",

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import frappe
 from frappe.sessions import delete_session, get_csrf_token
 from passport_core.password import confirm_password
+from passport_core.store import delete_stored_session, native_session_id
 from passport_core.ui import render_page
 from werkzeug.exceptions import Forbidden
 from werkzeug.utils import redirect
@@ -118,7 +119,7 @@ def response():
 			target = frappe.form_dict.get("device")
 			for (sid,) in rows:
 				if action == "everywhere" or protocol.digest(sid.encode()) == target:
-					delete_session(sid, user=user, reason="Frappe ID account logout")
+					delete_stored_session(sid, user=user, reason="Frappe ID account logout")
 		else:
 			raise Forbidden("Invalid action")
 		frappe.db.commit()
@@ -132,14 +133,14 @@ def account_page(user, *, error=None, status=200):
 	profile = frappe.db.get_value("User", user, ["email", "full_name"], as_dict=True)
 	sessions = []
 	for sid, raw in frappe.db.sql("SELECT sid,sessiondata FROM tabSessions WHERE user=%s", user):
-		if not store.get_valid_native_session(sid, user):
+		if not store.get_valid_native_session(sid, user, stored=True):
 			continue
 		data = json.loads(raw)
 		sessions.append(
 			{
 				"device": protocol.digest(sid.encode()),
 				"user_agent": data.get("user_agent") or "Unknown browser",
-				"current": sid == frappe.session.sid,
+				"current": sid == native_session_id(frappe.session.sid),
 			}
 		)
 	html = render_page(

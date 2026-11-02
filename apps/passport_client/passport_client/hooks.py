@@ -5,6 +5,7 @@ app_description = "Sign in with Frappe ID"
 app_email = "developers@frappe.io"
 app_license = "mit"
 after_migrate = ["passport_client.store.install"]
+after_install = ["passport_client.admission.after_install"]
 before_authentication = ["passport_client.federation.boundary"]
 protocol_response = ["passport_client.auth.response"]
 before_native_session_insert = ["passport_client.federation.insert"]
@@ -16,3 +17,5 @@ app_include_js = ["passport_desk.bundle.js"]
 doc_events = {"User": {"on_update": "passport_client.federation.user_changed"}}
 
 extend_bootinfo = ["passport_client.auth.extend_bootinfo"]
+
+scheduler_events = {"all": ["passport_client.discovery.deliver"]}

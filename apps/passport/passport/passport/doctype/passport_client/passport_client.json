@@ -15,9 +15,17 @@
   "public_jwk",
   "home_url",
   "redirect_uri",
-  "enabled"
+  "enabled",
+  "registration_revision"
  ],
  "fields": [
+  {
+   "fieldname": "registration_revision",
+   "fieldtype": "Data",
+   "label": "Registration revision",
+   "hidden": 1,
+   "read_only": 1
+  },
   {
    "fieldname": "title",
    "fieldtype": "Data",

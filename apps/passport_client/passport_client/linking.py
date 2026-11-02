@@ -6,6 +6,7 @@ import time
 import frappe
 from frappe.sessions import get_csrf_token
 from passport_core.password import confirm_password
+from passport_core.store import native_session_id
 from passport_core.ui import render_page
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
@@ -29,7 +30,7 @@ def require_local_user(*, lock=False):
 	):
 		raise PassportError("Linking is unavailable. Sign in locally or contact the site administrator.")
 	native = store.get_valid_native_session(frappe.session.sid, user, lock=lock)
-	if not native or native.get("passport") or store.get("federation", frappe.session.sid):
+	if not native or native.get("passport") or store.get("federation", native_session_id(frappe.session.sid)):
 		raise PassportError("Sign in with this site's local account before linking a Frappe ID.")
 	return user
 
@@ -61,7 +62,7 @@ def response():
 				{
 					"action": "link",
 					"user": user,
-					"local_sid": frappe.session.sid,
+					"local_sid": native_session_id(frappe.session.sid),
 					"generation": store.generation(user, lock=True),
 				}
 			)
@@ -83,14 +84,14 @@ def response():
 	)
 
 
-def finish(attempt, claims):
+def finish(attempt, claims, *, attempt_id=None):
 	from passport_client.auth import PassportError, config
 
 	user = require_local_user(lock=True)
 	if (
 		attempt["exp"] <= time.time()
 		or user != attempt["user"]
-		or frappe.session.sid != attempt["local_sid"]
+		or native_session_id(frappe.session.sid) != attempt["local_sid"]
 		or store.generation(user, lock=True) != attempt["generation"]
 	):
 		raise PassportError("The local session changed. Start linking again.")
@@ -98,17 +99,31 @@ def finish(attempt, claims):
 	# Serialize linking for this issuer before locking identity-index gaps.
 	registration = protocol.digest(issuer.encode())
 	store.put("link_registration", registration, {})
-	if frappe.db.sql(
+	rows = frappe.db.sql(
 		"SELECT name FROM `tabPassport Identity` WHERE issuer=%s AND (user=%s OR subject=%s) FOR UPDATE",
 		(issuer, user, claims["sub"]),
-	):
-		raise PassportError("An account is already linked. Existing links are not replaced.")
-	try:
-		frappe.get_doc(
-			{"doctype": "Passport Identity", "issuer": issuer, "subject": claims["sub"], "user": user}
-		).insert(ignore_permissions=True)
-	except frappe.DuplicateEntryError, frappe.UniqueValidationError:
-		raise PassportError("An account is already linked. Existing links are not replaced.")
+	)
+	if rows:
+		if not attempt.get("invitation") or len(rows) != 1:
+			raise PassportError("An account is already linked. Existing links are not replaced.")
+		identity = frappe.get_doc("Passport Identity", rows[0][0], for_update=True)
+		if (identity.user, identity.subject) != (user, claims["sub"]):
+			raise PassportError("The confirmed identity does not match this account's existing link.")
+	else:
+		try:
+			identity = frappe.get_doc(
+				{"doctype": "Passport Identity", "issuer": issuer, "subject": claims["sub"], "user": user}
+			).insert(ignore_permissions=True)
+		except frappe.DuplicateEntryError, frappe.UniqueValidationError:
+			raise PassportError("An account is already linked. Existing links are not replaced.")
+	if attempt.get("invitation"):
+		from passport_client.invitations import prepare
+
+		prepare(attempt_id, attempt, claims, identity, existing=bool(rows))
 	frappe.db.sql("DELETE FROM passport_state WHERE kind='link_registration' AND id=%s", registration)
 	frappe.db.commit()
+	if attempt.get("invitation"):
+		from passport_client.invitation_page import PATH as invitation_path
+
+		return redirect(invitation_path + "?attempt=" + attempt_id, code=303)
 	return redirect(PATH, code=303)

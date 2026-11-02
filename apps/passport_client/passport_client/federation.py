@@ -5,9 +5,10 @@ import secrets
 import time
 
 import frappe
+from passport_core.store import native_session_id
 from werkzeug.exceptions import Forbidden
 
-from passport_client import store
+from passport_client import admission, discovery, store
 
 BACKGROUND = {
 	"/passport/status",
@@ -21,7 +22,12 @@ def boundary():
 	path = frappe.request.path
 	if path.startswith("/passport/") or frappe.request.cookies.get("sid"):
 		# Native website forms still dispatch RPC through cmd at the root route.
-		if "sid" in frappe.form_dict or ("cmd" in frappe.form_dict and path != "/"):
+		native_login = (
+			path == "/api/method/login"
+			and frappe.request.method == "POST"
+			and frappe.form_dict.get("cmd") == "login"
+		)
+		if "sid" in frappe.form_dict or ("cmd" in frappe.form_dict and path != "/" and not native_login):
 			raise Forbidden("Invalid session parameters")
 	if path in BACKGROUND:
 		frappe.flags.passport_background = True
@@ -31,11 +37,18 @@ def insert(session):
 	if session.user != "Guest":
 		session.data.data.passport_generation = store.generation(session.user, lock=True)
 	if pending := frappe.flags.get("passport_pending"):
+		if (
+			frappe.conf.get("passport_disabled")
+			or pending.get("installation") != frappe.conf.get("passport_installation")
+			or not admission.permits(pending, lock=True)
+		):
+			raise frappe.AuthenticationError("This Passport login is not authorized for this site.")
 		session.data.data.passport = True
-		store.create("federation", session.sid, pending)
+		store.create("federation", native_session_id(session.sid), pending)
 
 
-def deleted(sid, user=None):
+def deleted(sid, user=None, stored=False):
+	sid = sid if stored else native_session_id(sid)
 	row = store.get("federation", sid, lock=True)
 	if row:
 		row["revoked"] = True
@@ -46,21 +59,21 @@ def deleted(sid, user=None):
 def get_valid_local_session(sid, row, lock=False):
 	if not row or row["revoked"] or row["deadline"] <= time.time():
 		return None
+	if row.get("installation") != frappe.conf.get("passport_installation"):
+		return None
 	native = store.get_valid_native_session(sid, row["user"], lock=lock)
 	if not native or not native.get("passport"):
 		return None
-	if frappe.conf.get("passport_disabled") or not frappe.db.exists(
-		"Passport Identity", {"issuer": row["issuer"], "subject": row["sub"], "user": row["user"]}
-	):
+	if frappe.conf.get("passport_disabled") or not admission.permits(row, lock=lock):
 		return None
 	return native
 
 
 def validate(sid, data):
-	row = store.get("federation", sid)
+	row = store.get("federation", native_session_id(sid))
 	if not row and not (data and data.get("passport")):
 		# A stale cache entry cannot erase the durable authentication-method marker.
-		raw = frappe.db.sql("SELECT sessiondata FROM tabSessions WHERE sid=%s", sid)
+		raw = frappe.db.sql("SELECT sessiondata FROM tabSessions WHERE sid=%s", native_session_id(sid))
 		if not raw or not json.loads(raw[0][0]).get("passport"):
 			return
 	if frappe.request.path == "/api/method/logout":
@@ -97,7 +110,7 @@ def renew(complete=False):
 	from passport_client.auth import PassportError, call, verify
 
 	sid = frappe.session.sid
-	row = store.get("federation", sid)
+	row = store.get("federation", native_session_id(sid))
 	if not get_valid_local_session(sid, row):
 		raise PassportError("This local session is no longer valid.")
 	revision = row["revision"]
@@ -117,10 +130,10 @@ def renew(complete=False):
 		or claims["exp"] - claims["iat"] > 300
 	):
 		raise PassportError("Invalid lease.")
-	# Lock User then native then federation, matching disablement/deletion ordering.
+	# Lock User, native session, association, policy, then federation; no locks cross the network call.
 	if not get_valid_local_session(sid, row, lock=True):
 		raise PassportError("This local session ended during validation.")
-	current = store.get("federation", sid, lock=True)
+	current = store.get("federation", native_session_id(sid), lock=True)
 	if (
 		not current
 		or current["revoked"]
@@ -130,13 +143,14 @@ def renew(complete=False):
 		raise PassportError("This local session changed during validation.")
 	current["exp"] = min(claims["exp"], row["deadline"])
 	current["revision"] += 1
-	store.put("federation", sid, current)
+	store.put("federation", native_session_id(sid), current)
+	discovery.record(current["issuer"], current["sub"], True)
 	frappe.db.commit()
 	return current["exp"]
 
 
 def socket_context():
-	row = store.get("federation", frappe.session.sid)
+	row = store.get("federation", native_session_id(frappe.session.sid))
 	if not row:
 		return None
 	native = get_valid_local_session(frappe.session.sid, row)
@@ -149,3 +163,7 @@ def user_changed(doc, method=None):
 	if doc.enabled:
 		return
 	store.revoke_user(doc.name)
+	for issuer, subject in frappe.db.sql(
+		"SELECT issuer,subject FROM `tabPassport Identity` WHERE user=%s", doc.name
+	):
+		discovery.record(issuer, subject, False)

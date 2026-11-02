@@ -7,6 +7,22 @@ from datetime import datetime, timezone
 import frappe
 
 
+def native_session_id(sid):
+	"""Return the native storage key for a raw browser session ID."""
+	from frappe import sessions
+
+	return sessions.hash_sid(sid) if hasattr(sessions, "hash_sid") else sid
+
+
+def delete_stored_session(sid, user, reason):
+	from frappe import sessions
+
+	if hasattr(sessions, "hash_sid"):
+		sessions.delete_session(sid_hash=sid, user=user, reason=reason)
+	else:
+		sessions.delete_session(sid, user=user, reason=reason)
+
+
 def install():
 	frappe.db.commit()
 	frappe.db.sql("""CREATE TABLE IF NOT EXISTS passport_state (
@@ -24,6 +40,30 @@ def install():
 		issuer_sid = JSON_UNQUOTE(JSON_EXTRACT(data, '$.issuer_sid'))""")
 	frappe.db.sql("""INSERT IGNORE INTO passport_state(kind,id,data,user,issuer_sid)
 		SELECT 'user_generation', name, JSON_OBJECT('generation', 0, 'user', name), name, NULL FROM tabUser""")
+	from frappe import sessions
+
+	if hasattr(sessions, "hash_sid"):
+		from frappe.utils import is_sha256_hash
+
+		for (sid,) in frappe.db.sql("SELECT id FROM passport_state WHERE kind='federation' FOR UPDATE"):
+			if not is_sha256_hash(sid):
+				frappe.db.sql(
+					"UPDATE passport_state SET id=%s WHERE kind='federation' AND id=%s",
+					(native_session_id(sid), sid),
+				)
+		for kind, key, raw in frappe.db.sql(
+			"SELECT kind,id,data FROM passport_state "
+			"WHERE JSON_EXTRACT(data, '$.issuer_sid') IS NOT NULL "
+			"OR JSON_EXTRACT(data, '$.local_sid') IS NOT NULL FOR UPDATE"
+		):
+			data = json.loads(raw)
+			changed = False
+			for field in ("issuer_sid", "local_sid"):
+				if (sid := data.get(field)) and not is_sha256_hash(sid):
+					data[field] = native_session_id(sid)
+					changed = True
+			if changed:
+				put(kind, key, data)
 	frappe.db.commit()
 
 
@@ -85,7 +125,7 @@ def rows(kind, *, user=None, issuer_sid=None, lock=False):
 	return [(key, json.loads(data)) for key, data in frappe.db.sql(query, parameters)]
 
 
-def get_valid_native_session(sid, user=None, lock=False):
+def get_valid_native_session(sid, user=None, lock=False, *, stored=False):
 	from frappe.sessions import get_expiry_in_seconds
 
 	if lock and not user:
@@ -97,7 +137,7 @@ def get_valid_native_session(sid, user=None, lock=False):
 			return None
 	result = frappe.db.sql(
 		"SELECT user,sessiondata,lastupdate FROM tabSessions WHERE sid=%s" + (" FOR UPDATE" if lock else ""),
-		sid,
+		sid if stored else native_session_id(sid),
 	)
 	if not result:
 		return None

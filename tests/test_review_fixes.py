@@ -7,13 +7,19 @@ from unittest.mock import Mock, patch
 
 import frappe
 from passport import account
-from passport_client import federation
+from passport_client import auth, federation
 from passport_core import password as password_confirmation
 from werkzeug.exceptions import Forbidden
 from werkzeug.wrappers import Response
 
 
 class RecoveryTests(unittest.TestCase):
+	def test_default_landing_delegates_to_native_login(self):
+		for path in (None, "", "https://elsewhere.invalid", "//elsewhere.invalid", "/\\elsewhere", "/\n"):
+			with self.subTest(path=path):
+				self.assertEqual(auth.safe_redirect(path), "/login")
+		self.assertEqual(auth.safe_redirect("/orders?status=open"), "/orders?status=open")
+
 	def setUp(self):
 		frappe.local.request = SimpleNamespace(path="/login")
 

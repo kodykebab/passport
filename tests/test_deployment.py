@@ -103,7 +103,7 @@ class DeploymentTests(unittest.TestCase):
 
 class NodeVersionTests(unittest.TestCase):
 	def test_supported_build_runtime_versions(self):
-		for version in ("v20.19.0", "v20.20.0", "v22.12.0", "v24.0.0", "v26.0.0"):
+		for version in ("v24.0.0", "v24.1.0", "v26.0.0"):
 			with (
 				self.subTest(version=version),
 				patch.object(deployment.subprocess, "check_output", return_value=version),
@@ -111,10 +111,10 @@ class NodeVersionTests(unittest.TestCase):
 				deployment.check_node_version()
 
 	def test_unsupported_runtime_fails_before_build(self):
-		for version in ("v18.20.0", "v20.18.9", "v21.7.0", "v22.11.0"):
+		for version in ("v18.20.0", "v20.19.0", "v20.20.0", "v22.12.0", "v23.11.0"):
 			with (
 				self.subTest(version=version),
 				patch.object(deployment.subprocess, "check_output", return_value=version),
 			):
-				with self.assertRaisesRegex(RuntimeError, "requires Node"):
+				with self.assertRaisesRegex(RuntimeError, "require Node 24"):
 					deployment.check_node_version()

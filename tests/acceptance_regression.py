@@ -5,6 +5,7 @@ import time
 import frappe
 from live_support import ID, SITE, USER, BrowserSessions, check, db, get, renew, store
 from page_data import page_data
+from passport_core.store import native_session_id
 
 
 def csrf_from(page):
@@ -13,9 +14,9 @@ def csrf_from(page):
 
 def expire(sid):
 	with db():
-		row = store.get("federation", sid)
+		row = store.get("federation", native_session_id(sid))
 		row["exp"] = int(time.time()) - 1
-		store.put("federation", sid, row)
+		store.put("federation", native_session_id(sid), row)
 
 
 with BrowserSessions() as sessions:

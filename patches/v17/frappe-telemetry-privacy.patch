@@ -1,0 +1,512 @@
+diff --git a/frappe/app.py b/frappe/app.py
+index 9d060a7..5e0e137 100644
+--- a/frappe/app.py
++++ b/frappe/app.py
+@@ -517,6 +529,7 @@ if sentry_dsn := os.getenv("FRAPPE_SENTRY_DSN"):
+ 	sentry_sdk.init(
+ 		dsn=sentry_dsn,
+ 		before_send=before_send,
++		before_send_transaction=before_send,
+ 		attach_stacktrace=True,
+ 		release=frappe.__version__,
+ 		auto_enabling_integrations=False,
+diff --git a/frappe/core/doctype/scheduled_job_type/scheduled_job_type.py b/frappe/core/doctype/scheduled_job_type/scheduled_job_type.py
+index b1cbb8f..ab54d68 100644
+--- a/frappe/core/doctype/scheduled_job_type/scheduled_job_type.py
++++ b/frappe/core/doctype/scheduled_job_type/scheduled_job_type.py
+@@ -195,7 +195,7 @@ class ScheduledJobType(Document):
+ 		if frappe.debug_log:
+ 			self.scheduler_log.db_set("debug_log", "\n".join(frappe.debug_log))
+ 		if status == "Failed":
+-			self.scheduler_log.db_set("details", frappe.get_traceback(with_context=True))
++			self.scheduler_log.db_set("details", frappe.get_traceback())
+ 		if status == "Start":
+ 			self.db_set("last_execution", now_datetime(), update_modified=False)
+ 		frappe.db.commit()
+diff --git a/frappe/tests/test_sentry.py b/frappe/tests/test_sentry.py
+index f6e6acf..16212bf 100644
+--- a/frappe/tests/test_sentry.py
++++ b/frappe/tests/test_sentry.py
+@@ -96,7 +96,7 @@ class TestSentryRequestBody(UnitTestCase):
+ 
+ 		self.assertEqual(len(sent), 1)
+ 		self.assertNotIn("pw-1", json.dumps(sent))
+-		self.assertIn("test@example.com", json.dumps(sent))
++		self.assertNotIn("test@example.com", json.dumps(sent))
+ 
+ 	def test_captured_event_masks_frame_vars_and_query_string(self):
+ 		sent = self.capture_error_event("query", doc=SECRET_DOC)
+@@ -104,8 +104,8 @@ class TestSentryRequestBody(UnitTestCase):
+ 		payload = json.dumps(sent)
+ 		self.assertNotIn(QUERY_PASSWORD, payload)
+ 		self.assertNotIn(DOC_PASSWORD, payload)
+-		self.assertIn("cmd=ping", payload)
+-		self.assertIn("Email Account", payload)
++		self.assertNotIn("cmd=ping", payload)
++		self.assertNotIn("Email Account", payload)
+ 
+ 	def test_message_event_masks_frame_vars(self):
+ 		sent = self.capture_error_event("query", doc=SECRET_DOC, as_message=True)
+@@ -113,7 +113,9 @@ class TestSentryRequestBody(UnitTestCase):
+ 		self.assertEqual(len(sent), 1)
+ 		self.assertIn("threads", sent[0])
+ 		self.assertNotIn(DOC_PASSWORD, json.dumps(sent))
+-		self.assertIn("Email Account", json.dumps(sent))
++		for thread in sent[0]["threads"]["values"]:
++			for frame in thread.get("stacktrace", {}).get("frames", []):
++				self.assertNotIn("vars", frame)
+ 
+ 	def capture_error_event(self, request_name, doc=None, as_message=False):
+ 		sent = []
+diff --git a/frappe/utils/background_jobs.py b/frappe/utils/background_jobs.py
+index dcbede0..76abf47 100644
+--- a/frappe/utils/background_jobs.py
++++ b/frappe/utils/background_jobs.py
+@@ -905,6 +905,7 @@ def _start_sentry():
+ 	sentry_sdk.init(
+ 		dsn=sentry_dsn,
+ 		before_send=before_send,
++		before_send_transaction=before_send,
+ 		attach_stacktrace=True,
+ 		release=frappe.__version__,
+ 		auto_enabling_integrations=False,
+diff --git a/frappe/utils/error.py b/frappe/utils/error.py
+index e73dae2..408649d 100644
+--- a/frappe/utils/error.py
++++ b/frappe/utils/error.py
+@@ -58,7 +58,7 @@ def log_error(
+ 		else:
+ 			traceback = message
+ 
+-	traceback = frappe.as_unicode(traceback or frappe.get_traceback(with_context=True))
++	traceback = frappe.as_unicode(traceback or frappe.get_traceback())
+ 
+ 	if not title:
+ 		if traceback:
+@@ -146,8 +146,6 @@ def get_error_metadata() -> str:
+ 	"""
+ 	import rq
+ 
+-	from frappe.utils.logger import sanitized_dict
+-
+ 	metadata = {}
+ 
+ 	try:
+@@ -156,7 +154,6 @@ def get_error_metadata() -> str:
+ 			metadata["job_id"] = job.id
+ 			metadata["job_name"] = frappe.cstr(job.kwargs.get("method"))
+ 			metadata["queue"] = job.origin
+-			metadata["kwargs"] = sanitized_dict(job.kwargs)
+ 
+ 			if "run_scheduled_job" in metadata["job_name"]:
+ 				metadata["scheduled"] = True
+@@ -164,9 +161,8 @@ def get_error_metadata() -> str:
+ 
+ 		else:
+ 			metadata["type"] = "http_request"
+-			for key in ("method", "path", "referrer"):
++			for key in ("method", "path"):
+ 				metadata[key] = getattr(frappe.local.request, key)
+-			metadata["form_dict"] = sanitized_dict(frappe.form_dict)
+ 
+ 		metadata["user"] = getattr(frappe.session, "user", "Unidentified")
+ 	except Exception:
+diff --git a/frappe/utils/sentry.py b/frappe/utils/sentry.py
+index 9b1835b..21e30a6 100644
+--- a/frappe/utils/sentry.py
++++ b/frappe/utils/sentry.py
+@@ -1,9 +1,8 @@
+-import ast
+ import json
+ import os
+ import sys
+ from datetime import UTC, datetime
+-from urllib.parse import parse_qsl, urlencode
++from urllib.parse import urlsplit, urlunsplit
+ 
+ import rq
+ import sentry_sdk
+@@ -11,7 +10,7 @@ from sentry_sdk.integrations import Integration
+ from sentry_sdk.integrations.wsgi import _make_wsgi_event_processor
+ from sentry_sdk.tracing import SOURCE_FOR_STYLE
+ from sentry_sdk.tracing_utils import record_sql_queries
+-from sentry_sdk.utils import capture_internal_exceptions, event_from_exception
++from sentry_sdk.utils import capture_internal_exceptions, event_from_exception, iter_event_frames
+ 
+ import frappe
+ import frappe.monitor
+@@ -64,11 +63,12 @@ def set_scope(scope):
+ 
+ 		scope.set_extra("job", context)
+ 		scope.set_transaction_name(transaction_name)
+-	else:
+-		if frappe.form_dict.cmd:
+-			path = f"/api/method/{frappe.form_dict.cmd}"
++	elif request := getattr(frappe.local, "request", None):
++		form = getattr(frappe.local, "form_dict", {}) or {}
++		if form.get("cmd"):
++			path = f"/api/method/{form['cmd']}"
+ 		else:
+-			path = frappe.request.path
++			path = request.path
+ 
+ 		scope.set_transaction_name(
+ 			path,
+@@ -93,7 +93,31 @@ def set_sentry_context():
+ def before_send(event, hint):
+ 	if event.get("logger", "") == "CSSUTILS":
+ 		return None
+-	scrub_event(event)
++	if request := event.get("request"):
++		metadata = {"method": request["method"]} if "method" in request else {}
++		if isinstance(request.get("url"), str):
++			try:
++				url = urlsplit(request["url"])
++				metadata["url"] = urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
++			except ValueError:
++				pass
++		event["request"] = metadata
++	contexts = event.get("contexts", {})
++	contexts.pop("Form Data", None)
++	contexts.pop("JSON Body", None)
++	job = event.get("extra", {}).get("job")
++	if isinstance(job, dict):
++		job.pop("kwargs", None)
++	for frame in iter_event_frames(event):
++		frame.pop("vars", None)
++	for span in event.get("spans", []):
++		if span.get("op", "").startswith("db"):
++			span.pop("description", None)
++			span.pop("data", None)
++	if breadcrumbs := event.get("breadcrumbs"):
++		breadcrumbs["values"] = [
++			entry for entry in breadcrumbs.get("values", []) if entry.get("category") != "query"
++		]
+ 	return event
+ 
+ 
+@@ -163,44 +187,3 @@ def sanitize_body(data, depth=0):
+ 	if isinstance(data, dict):
+ 		return sanitized_dict({k: sanitize_body(v, depth + 1) for k, v in data.items()})
+ 	return data
+-
+-
+-def scrub_event(event):
+-	"""Mask secrets that reach an event outside the request body context:
+-	local variables of stack frames and the request query string."""
+-	# message events (no active exception) keep their frames under `threads`
+-	for key in ("exception", "threads"):
+-		for value in event.get(key, {}).get("values", []):
+-			for frame in value.get("stacktrace", {}).get("frames", []):
+-				if frame.get("vars"):
+-					frame["vars"] = _scrub_var(frame["vars"])
+-
+-	request = event.get("request") or {}
+-	if isinstance(request.get("query_string"), str):
+-		request["query_string"] = _scrub_query_string(request["query_string"])
+-
+-
+-def _scrub_var(value, depth=0):
+-	"""Frame variables are sent as `repr()` strings, so a string holding JSON shows up quoted."""
+-	if depth > MAX_BODY_DEPTH:
+-		return MASK
+-	if isinstance(value, dict):
+-		return sanitized_dict({k: _scrub_var(v, depth + 1) for k, v in value.items()})
+-	if isinstance(value, list):
+-		return [_scrub_var(v, depth + 1) for v in value]
+-	if isinstance(value, str):
+-		try:
+-			raw = ast.literal_eval(value)
+-		except (ValueError, SyntaxError, RecursionError, MemoryError):
+-			return value
+-		if isinstance(raw, str):
+-			cleaned = sanitize_body(raw)
+-			if not isinstance(cleaned, str) and MASK in json.dumps(cleaned):
+-				return repr(json.dumps(cleaned))
+-	return value
+-
+-
+-def _scrub_query_string(query_string):
+-	pairs = parse_qsl(query_string, keep_blank_values=True)
+-	masked = urlencode([(k, sanitized_dict({k: v})[k]) for k, v in pairs])
+-	return masked if MASK in sanitized_dict(dict(pairs)).values() else query_string
+diff --git a/frappe/tests/test_sentry_privacy.py b/frappe/tests/test_sentry_privacy.py
+new file mode 100644
+index 0000000..bc2b377
+--- /dev/null
++++ b/frappe/tests/test_sentry_privacy.py
+@@ -0,0 +1,274 @@
++import json
++import time
++import uuid
++from datetime import UTC, datetime
++from unittest.mock import MagicMock, patch
++
++import sentry_sdk
++from sentry_sdk import Client
++from sentry_sdk.integrations.wsgi import SentryWsgiMiddleware
++from sentry_sdk.tracing_utils import record_sql_queries
++from sentry_sdk.transport import Transport
++from werkzeug.datastructures import MultiDict
++from werkzeug.wrappers import Request
++
++import frappe
++from frappe.tests import UnitTestCase
++from frappe.utils.sentry import before_send, capture_exception
++
++
++class TestSentryPrivacy(UnitTestCase):
++	def test_transaction_and_profile_payloads_are_private(self):
++		marker = uuid.uuid4().hex
++		payloads = []
++
++		class MemoryTransport(Transport):
++			def capture_event(self, event):
++				payloads.append(("event", event))
++
++			def capture_envelope(self, envelope):
++				for item in envelope.items:
++					payloads.append((item.headers["type"], json.loads(item.get_bytes())))
++
++		def application(environ, start_response):
++			scope = sentry_sdk.get_current_scope()
++			scope.set_context("Form Data", {"secret": marker})
++			scope.set_extra("job", {"uuid": "fixture-job", "kwargs": {"alias": marker}})
++			for query, values in (("SELECT %s", (marker,)), ("SELECT '" + marker + "'", None)):
++				with record_sql_queries(None, query, values, "pyformat", False):
++					time.sleep(0.06)
++			with sentry_sdk.start_span(op="task", description="Render invitation") as span:
++				span.set_data("result", "ready")
++			start_response("200 OK", [("Content-Type", "text/plain")])
++			return [b"ok"]
++
++		client = Client(
++			dsn="https://fixture@telemetry.example.invalid/1",
++			transport=MemoryTransport(),
++			default_integrations=False,
++			include_local_variables=False,
++			before_send=before_send,
++			before_send_transaction=before_send,
++			traces_sample_rate=1.0,
++			profiles_sample_rate=1.0,
++			_experiments={"record_sql_params": True},
++		)
++		try:
++			with sentry_sdk.new_scope() as scope:
++				scope.set_client(client)
++				request = Request.from_values(
++					base_url="https://test.local", path="/passport/invitation?secret=" + marker
++				)
++				response = SentryWsgiMiddleware(application)(
++					request.environ, lambda status, headers, exc_info=None: None
++				)
++				try:
++					self.assertEqual(b"".join(response), b"ok")
++				finally:
++					response.close()
++			client.flush()
++		finally:
++			client.close()
++		self.assertFalse(marker in json.dumps(payloads), "Transaction/profile payload escaped into telemetry")
++		transactions = [value for kind, value in payloads if kind == "transaction"]
++		profiles = [value for kind, value in payloads if kind == "profile"]
++		self.assertEqual(len(transactions), 1)
++		self.assertEqual(len(profiles), 1)
++		spans = transactions[0]["spans"]
++		self.assertEqual(len(spans), 3)
++		for span in spans[:2]:
++			self.assertTrue(span["op"].startswith("db"))
++			self.assertIn("start_timestamp", span)
++			self.assertIn("timestamp", span)
++		self.assertEqual(spans[2]["description"], "Render invitation")
++		self.assertEqual(spans[2]["data"]["result"], "ready")
++		self.assertTrue(profiles[0]["profile"]["samples"])
++		self.assertEqual(profiles[0]["transactions"][0]["id"], transactions[0]["event_id"])
++
++	def capture(self, request, *, job=None, message=False, enabled=True, error=RuntimeError, sql_value=None):
++		events = []
++
++		def retain_locally(event, hint):
++			cleaned = before_send(event, hint)
++			if cleaned is not None:
++				events.append(cleaned)
++			return None
++
++		client = Client(
++			dsn="https://fixture@telemetry.example.invalid/1",
++			before_send=retain_locally,
++			default_integrations=False,
++			include_local_variables=False,
++			attach_stacktrace=True,
++			_experiments={"record_sql_params": True},
++		)
++		try:
++			with (
++				sentry_sdk.isolation_scope() as isolation,
++				sentry_sdk.new_scope() as scope,
++				patch.object(frappe.local, "request", request, create=True),
++				patch.object(
++					frappe.local, "form_dict", frappe._dict(request.values) if request else frappe._dict()
++				),
++				patch("frappe.utils.sentry.rq.get_current_job", return_value=job),
++				patch.object(frappe, "get_system_settings", return_value=int(enabled)),
++			):
++				scope.set_client(client)
++				isolation.clear_breadcrumbs()
++				if sql_value:
++					sentry_sdk.add_breadcrumb(category="lifecycle", message="Request started")
++					for query, values in (("SELECT %s", (sql_value,)), ("SELECT '" + sql_value + "'", None)):
++						with record_sql_queries(None, query, values, "pyformat", False):
++							pass
++				if message:
++					capture_exception("Fixture diagnostic")
++				else:
++					try:
++						raise error("Fixture diagnostic")
++					except error:
++						capture_exception()
++		finally:
++			client.close()
++		return events
++
++	def test_request_payload_copies_are_absent_after_sdk_serialization(self):
++		marker = uuid.uuid4().hex
++		for kind in ("query", "form", "json"):
++			with self.subTest(kind=kind):
++				request = Request.from_values(
++					base_url="https://test.local",
++					path="/passport/invitation?SeCrEt=" + marker + "&secret=" + marker + "&empty=",
++					method="GET" if kind == "query" else "POST",
++					data=MultiDict(
++						[("secret", marker), ("secret", marker), ("doc", json.dumps({"value": marker}))]
++					)
++					if kind == "form"
++					else json.dumps({"nested": [{"value": marker}]})
++					if kind == "json"
++					else None,
++					content_type="application/json" if kind == "json" else None,
++					headers={
++						"Authorization": "Bearer " + marker,
++						"Cookie": "session=" + marker,
++						"Referer": "https://test.local/?secret=" + marker,
++					},
++				)
++				original = request.get_data()
++				events = self.capture(request)
++				self.assertEqual(len(events), 1)
++				self.assertFalse(marker in json.dumps(events), "Request data escaped into telemetry")
++				self.assertEqual(
++					events[0]["request"],
++					{"method": request.method, "url": "https://test.local/passport/invitation"},
++				)
++				self.assertEqual(events[0]["exception"]["values"][0]["type"], "RuntimeError")
++				self.assertEqual(events[0]["exception"]["values"][0]["value"], "Fixture diagnostic")
++				self.assertTrue(events[0]["exception"]["values"][0]["stacktrace"]["frames"])
++				self.assertEqual(request.get_data(), original)
++
++	def test_requestless_exception_is_still_captured(self):
++		events = self.capture(None)
++		self.assertEqual(len(events), 1)
++		self.assertEqual(events[0]["exception"]["values"][0]["type"], "RuntimeError")
++
++	def test_scheduled_job_failure_omits_traceback_locals(self):
++		from frappe.core.doctype.scheduled_job_type.scheduled_job_type import ScheduledJobType
++
++		marker = uuid.uuid4().hex
++		document = MagicMock(create_log=True)
++		try:
++			payload = {"nested": [marker]}
++			raise RuntimeError("Synthetic worker failure")
++		except RuntimeError:
++			ScheduledJobType.update_scheduler_log(document, "Failed")
++		details = next(
++			call.args[1] for call in document.scheduler_log.db_set.call_args_list if call.args[0] == "details"
++		)
++		self.assertNotIn(marker, details)
++		self.assertIn("RuntimeError: Synthetic worker failure", details)
++		self.assertEqual(payload["nested"], [marker])
++
++	def test_error_log_omits_traceback_locals_and_request_payload(self):
++		from frappe.utils.error import log_error
++
++		marker = uuid.uuid4().hex
++		request = Request.from_values(
++			path="/passport/invitation?secret=" + marker,
++			headers={"Referer": "https://test.local/?secret=" + marker},
++		)
++		with (
++			patch.object(frappe.local, "request", request, create=True),
++			patch.object(frappe.local, "form_dict", frappe._dict(secret=marker)),
++			patch("rq.get_current_job", return_value=None),
++			patch("frappe.utils.sentry.capture_exception"),
++			patch.object(frappe, "get_doc") as document,
++		):
++			try:
++				payload = {"nested": [marker]}
++				raise RuntimeError("Synthetic unexpected failure")
++			except RuntimeError:
++				log_error(title="Fixture diagnostic")
++			values = document.call_args.kwargs
++			self.assertNotIn(marker, values["error"] + values["metadata"])
++			self.assertIn("RuntimeError: Synthetic unexpected failure", values["error"])
++			self.assertEqual(json.loads(values["metadata"])["path"], "/passport/invitation")
++			self.assertEqual(payload["nested"], [marker])
++
++	def test_worker_arguments_and_message_stack_locals_are_omitted(self):
++		marker = uuid.uuid4().hex
++		job = MagicMock()
++		job._kwargs = {"method": "frappe.ping", "kwargs": {"doc": json.dumps({"value": marker})}}
++		job.id = "fixture-job"
++		job.enqueued_at = datetime.now(UTC)
++		for message in (False, True):
++			with self.subTest(message=message):
++				events = self.capture(Request.from_values(), job=job, message=message)
++				self.assertEqual(len(events), 1)
++				self.assertFalse(marker in json.dumps(events), "Worker arguments escaped into telemetry")
++				self.assertEqual(events[0]["extra"]["job"]["uuid"], job.id)
++				self.assertEqual(events[0]["transaction"], "frappe.ping")
++				self.assertIn("wait", events[0]["extra"]["job"])
++				self.assertNotIn("kwargs", events[0]["extra"]["job"])
++		self.assertEqual(job._kwargs["kwargs"]["doc"], json.dumps({"value": marker}))
++
++	def test_existing_exclusions_and_telemetry_opt_in(self):
++		self.assertIsNone(before_send({"logger": "CSSUTILS"}, {}))
++		self.assertEqual(self.capture(Request.from_values(), enabled=False), [])
++		for error in (frappe.ValidationError, frappe.PermissionError):
++			self.assertEqual(self.capture(Request.from_values(), error=error), [])
++
++	def test_supplied_stack_locals_are_removed(self):
++		marker = uuid.uuid4().hex
++		frame = {"filename": "handler.py", "lineno": 12, "vars": {"alias": repr({"data": marker})}}
++		for event in (
++			{"stacktrace": {"frames": [dict(frame)]}},
++			{"exception": {"values": [{"type": "RuntimeError", "stacktrace": {"frames": [dict(frame)]}}]}},
++			{"threads": {"values": [{"stacktrace": {"frames": [dict(frame)]}}]}},
++		):
++			result = before_send(event, {})
++			self.assertFalse(marker in json.dumps(result))
++			self.assertIn("handler.py", json.dumps(result))
++
++	def test_sql_breadcrumb_payload_copies_are_removed(self):
++		marker = uuid.uuid4().hex
++		for message in (False, True):
++			with self.subTest(message=message):
++				events = self.capture(Request.from_values(), message=message, sql_value=marker)
++				self.assertEqual(len(events), 1)
++				self.assertFalse(marker in json.dumps(events), "SQL payload escaped into telemetry")
++				self.assertEqual(
++					[entry["category"] for entry in events[0]["breadcrumbs"]["values"]], ["lifecycle"]
++				)
++
++	def test_url_credentials_and_malformed_urls(self):
++		for url, expected in (
++			("https://user:password@test.local/path?secret=x#x", "https://test.local/path"),
++			("https://[broken", None),
++		):
++			with self.subTest(url=url):
++				event = before_send(
++					{"request": {"method": "GET", "url": url}, "contexts": {"runtime": {"name": "Python"}}},
++					{},
++				)
++				self.assertEqual(event["request"].get("url"), expected)
++				self.assertEqual(event["contexts"]["runtime"]["name"], "Python")

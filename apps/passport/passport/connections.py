@@ -6,7 +6,52 @@ import frappe
 from passport_core.ui import render_page
 from werkzeug.wrappers import Response
 
-from passport import protocol, store
+from passport import protocol, registration, store
+
+
+def report(client, body):
+	if (
+		set(body) != {"client_id", "subject", "installation", "sequence", "allowed"}
+		or not isinstance(body["subject"], str)
+		or not body["subject"]
+		or len(body["subject"]) > 140
+		or type(body["sequence"]) is not int
+		or not 0 < body["sequence"] < 2**63
+		or type(body["allowed"]) is not bool
+		or body["installation"] != client.registration_revision
+		or not body["installation"]
+	):
+		raise ValueError("invalid_outcome")
+	user = frappe.db.get_value("Passport Account", body["subject"], "user")
+	if not user:
+		raise ValueError("unknown_subject")
+	frappe.db.sql("SELECT name FROM tabUser WHERE name=%s FOR UPDATE", user)
+	account = frappe.db.sql(
+		"SELECT user FROM `tabPassport Account` WHERE name=%s FOR UPDATE", body["subject"]
+	)
+	if not account or account[0][0] != user:
+		raise ValueError("subject_changed")
+	identifier = key(user, client.name)
+	row = store.get("connection", identifier, lock=True) or {
+		"user": user,
+		"client": client.name,
+		"generation": 0,
+		"revoked": False,
+	}
+	registration.check(client.name, client.registration_revision)
+	sequence = (
+		row.get("admission_sequence", 0) if row.get("admission_installation") == body["installation"] else 0
+	)
+	if sequence == body["sequence"] and row["admission_hidden"] == body["allowed"]:
+		raise ValueError("conflicting_outcome")
+	if body["sequence"] > sequence:
+		row.update(
+			admission_installation=body["installation"],
+			admission_sequence=body["sequence"],
+			admission_hidden=not body["allowed"],
+		)
+		store.put("connection", identifier, row)
+	return {"installation": body["installation"], "sequence": body["sequence"]}
 
 
 def key(user, client):
@@ -54,14 +99,24 @@ def site_origin(callback):
 		return None
 
 
-def sites(user):
+def sites(user, *, picker=False):
 	known = {row["client"]: {"revoked": False} for _, row in store.rows("login", user=user)}
 	known.update({row["client"]: row for _, row in store.rows("connection", user=user)})
 	result = []
 	for client, row in sorted(known.items()):
 		registered = frappe.db.get_value(
-			"Passport Client", client, ["title", "redirect_uri", "enabled"], as_dict=True
+			"Passport Client",
+			client,
+			["title", "redirect_uri", "enabled", "registration_revision"],
+			as_dict=True,
 		)
+		hidden = row.get("admission_hidden", False) or bool(
+			row.get("admission_installation")
+			and registered
+			and row["admission_installation"] != registered.registration_revision
+		)
+		if picker and hidden:
+			continue
 		origin = site_origin(registered.redirect_uri) if registered else None
 		result.append(
 			{
@@ -69,7 +124,7 @@ def sites(user):
 				"title": registered.title if registered else client,
 				"origin": origin or "Registration unavailable",
 				"login_url": origin + "/passport/login"
-				if origin and registered.enabled and not row["revoked"]
+				if origin and registered.enabled and not row["revoked"] and not hidden
 				else None,
 				"revoked": row["revoked"],
 			}

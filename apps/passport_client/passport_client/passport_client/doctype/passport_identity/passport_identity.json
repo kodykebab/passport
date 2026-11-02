@@ -4,6 +4,7 @@
  "module": "Passport Client",
  "autoname": "hash",
  "engine": "InnoDB",
+ "track_changes": 1,
  "creation": "2026-10-11 00:00:00",
  "modified": "2026-10-11 00:00:00",
  "modified_by": "Administrator",
@@ -12,9 +13,25 @@
  "field_order": [
   "issuer",
   "subject",
-  "user"
+  "user",
+  "admitted",
+  "access_epoch"
  ],
  "fields": [
+  {
+   "fieldname": "admitted",
+   "fieldtype": "Check",
+   "label": "Passport admission approved",
+   "default": "0",
+   "hidden": 1
+  },
+  {
+   "fieldname": "access_epoch",
+   "fieldtype": "Data",
+   "label": "Access epoch",
+   "read_only": 1,
+   "hidden": 1
+  },
   {
    "fieldname": "issuer",
    "fieldtype": "Data",

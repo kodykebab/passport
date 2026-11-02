@@ -9,6 +9,7 @@ import frappe
 from live_support import ID, USER, BrowserSessions, check, db
 from page_data import page_data
 from passport import connections, oidc, protocol, store
+from passport_core.store import native_session_id
 
 prefix = "connections-test-" + secrets.token_hex(8)
 clients = [prefix + "-one", prefix + "-two"]
@@ -26,7 +27,7 @@ def issue(sid, client, generation):
 				"client": client,
 				"user": USER,
 				"sub": "isolated-subject",
-				"issuer_sid": sid,
+				"issuer_sid": native_session_id(sid),
 				"revoked": False,
 				"deadline": int(time.time()) + 3600,
 				"pending_until": time.time() + 120,
@@ -97,7 +98,7 @@ try:
 				{
 					"client": clients[0],
 					"user": USER,
-					"issuer_sid": sid,
+					"issuer_sid": native_session_id(sid),
 					"connection_generation": 0,
 					"redirect_uri": "https://example.invalid/callback",
 					"exp": time.time() + 60,

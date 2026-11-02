@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 import frappe
 from passport import consent, oidc
 from passport_client import auth, linking
+from passport_core.store import native_session_id
 from werkzeug.datastructures import MultiDict
 
 
@@ -46,7 +47,7 @@ class LinkingTests(unittest.TestCase):
 	def test_session_generation_expiry_and_existing_links_prevent_insert(self):
 		attempt = {
 			"user": "local@example.test",
-			"local_sid": "local-session",
+			"local_sid": native_session_id("local-session"),
 			"generation": 0,
 			"exp": time.time() + 600,
 		}
@@ -66,7 +67,7 @@ class LinkingTests(unittest.TestCase):
 	def test_consent_rejects_csrf_replay_expiry_and_session_swap(self):
 		row = {
 			"user": frappe.session.user,
-			"issuer_sid": frappe.session.sid,
+			"issuer_sid": native_session_id(frappe.session.sid),
 			"exp": time.time() + 600,
 			"client": "client",
 			"args": {"redirect_uri": "https://site.example/passport/callback", "state": "state"},
@@ -90,9 +91,10 @@ class LinkingTests(unittest.TestCase):
 			grant.assert_not_called()
 
 	def test_consent_cancel_spends_request_without_issuing_code(self):
+		frappe.db.sql.return_value = [(1, "")]
 		row = {
 			"user": frappe.session.user,
-			"issuer_sid": frappe.session.sid,
+			"issuer_sid": native_session_id(frappe.session.sid),
 			"exp": time.time() + 600,
 			"client": "client",
 			"args": {"redirect_uri": "https://site.example/passport/callback", "state": "state"},
@@ -126,6 +128,7 @@ class LinkingTokenTests(unittest.TestCase):
 
 		frappe.local.conf = frappe._dict(passport_issuer="https://id.example")
 		frappe.local.db = Mock()
+		frappe.db.sql.return_value = [(1, "")]
 		frappe.db.get_value.return_value = frappe._dict(email="id@example.test", full_name="Name")
 		grant = {
 			"action": "link",

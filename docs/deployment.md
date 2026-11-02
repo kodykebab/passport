@@ -1,6 +1,10 @@
 # Deploy the existing development PoC
 
-This procedure updates an existing Passport installation on Frappe commit `4dc04fac4dd5bf20feb9f24e029202b3eadb52b8` with the checked-in session integration patch. It does not create a bench, site, account, identity link or key. Native Desk UI and routing stay unchanged.
+This procedure updates a Passport installation on either exact Frappe revision listed with the [framework candidate patches](../patches/README.md). It does not create a bench, site, account, identity link or key. The preflight selects patches from the checkout's commit and rejects an unknown revision or either missing patch. Native Desk supplies invitation administration through standard DocType scripts.
+
+Prepare a separate bench for this candidate. Do not downgrade an existing v17 development database to v16. Migrating an existing application deployment requires its own supported version path and database compatibility checks. Both Node and Python realtime backends enforce the same Passport lease boundary. The pinned revisions still require dependency-advisory review; passing preflight is not production approval.
+
+When upgrading from raw session storage to v17, stop web, worker and scheduler processes during migration. Run the normal framework migration and Passport migration before starting all processes on the matching source. Passport converts federation keys and local/issuer session references to native hashes. Do not mix old and new writers during this conversion or roll the code back onto the migrated database. Restore the reviewed pre-upgrade database and source together if rollback is required. A fresh v17 installation does not prove the upgrade path of an existing application deployment.
 
 ## Check before changing anything
 
@@ -12,7 +16,7 @@ From the Passport checkout, using its existing bench Python:
 
 The check verifies source installation paths, the retained framework commit/patch, build tools and compatible Node version, site configuration, Passport schema, email-limit persistence hook, outgoing mail selection, a registered default-queue worker, native client setup completion and custom UI manifests. It reports missing prerequisites without provisioning them or printing secret values. A registered worker and configured mail account do not prove successful delivery; verify that separately through the normal login flow.
 
-Use `--bench`, `--issuer` and `--client` to select the existing installation. Defaults are `.bench`, `id.localhost` and `site1.localhost`. This is still a one-issuer/one-client procedure. Install a supported Node version before building (20.19+ within v20, or 22.12+); the retained Ubuntu environment uses Node 24.
+Use `--bench`, `--issuer` and `--client` to select the existing installation. Defaults are `.bench`, `id.localhost` and `site1.localhost`. This is still a one-issuer/one-client procedure. Both pinned Frappe revisions require Node 24 or newer; the retained Ubuntu environment uses Node 24.
 
 If client setup is incomplete, complete the standard Frappe setup lifecycle as Administrator. Do not grant setup roles to federated users or directly toggle setup flags. Missing signing keys, identity links or email-challenge keys require the existing explicit manual provisioning process; a deployment never rotates or creates them silently.
 
@@ -52,6 +56,28 @@ bench --site id.localhost execute frappe.core.doctype.scheduled_job_type.schedul
 
 Use the actual issuer site name if it differs. This registers jobs from installed-app hooks; it does not run them, flush Redis or enable a disabled scheduler. Restart the existing scheduler/worker processes afterward and verify that both hourly jobs are registered. A standard reviewed migration also synchronizes these definitions. Avoid the development provisioning script for routine source-only updates: it intentionally provisions the development protocol configuration.
 
+## Client registration approval
+
+Passport System Managers control the existing Passport Client record. The internal `passport.setup.register_client` helper requires that role and uses native document permissions. Do not expose the helper as an unauthenticated provisioning endpoint.
+
+Changes to the registered public key, home URL, callback or enabled state rotate a hidden registration revision. Pending consent, authorization grants and login records retain their original revision. Token exchange and lease renewal recheck the current registration under a database lock before proceeding. Disabling and re-enabling a registration does not restore old grants. Title edits preserve the revision. Existing records without a revision remain compatible until a trust field changes; migrate the issuer schema before deploying this code.
+
+A registration change prevents future renewal. A lease already issued can remain usable until its existing expiry, at most five minutes. The client binds each new federated session to the site's `passport_installation` configuration value. A changed marker rejects old sessions even after `passport_disabled` is cleared. Independent native sessions retain their existing behavior. Legacy sites without a marker remain compatible until the first installation change.
+
+Pilot suspends existing Passport configuration and changes this marker before database/configuration restore or reinstall. It excludes Passport configuration from imported backups. Use Pilot's `passport-prepare`, `passport-review`, and `passport-confirm` commands for enrollment. Preparation returns a public request. A Passport System Manager verifies the destination and calls `passport.setup.approve_enrollment(request, title)` in the issuer administrator console. Confirmation verifies a short-lived signed response and activates only the explicitly reviewed local identity associations. The private signing key stays in the destination configuration. No issuer administrator credential is given to Pilot. Clones require a distinct client ID and destination origin. Before ownership transfer, use `passport-suspend` and repeat approval and local admission review.
+
+The client's existing scheduler delivers pending site-access outcomes from SQL to `/passport/site-access`. Enable the site scheduler for picker updates. Reports are authenticated by the site's approved key and ordered by installation and sequence; delayed reports cannot undo a newer denial. Confirmed denial removes the site from the picker. Transport failure retains the pending report and does not invent a denial. Reports do not change the user's separate Passport consent. Registration replacement hides prior-installation outcomes until the new installation confirms access. The picker is discovery, not an authorization boundary: sites still check admission and native permissions when a user enters.
+
+## Operational checks
+
+Before enabling a destination, verify that its native scheduler and a default-queue worker run, the approved installation matches its admission policy, and no enrollment remains pending. Use `bench --site SITE doctor` to inspect scheduler/workers and the native Scheduled Job Type for `passport_client.discovery.deliver` to inspect delivery failures. Enabling the scheduler is an explicit operator action; a successful asset build does not enable it. Keep a failed or interrupted enrollment suspended and repeat the documented review/confirmation workflow.
+
+Run `bench --site SITE execute passport_client.discovery.get_status` as an administrator to see current-installation pending/retrying counts, suspension and scheduler configuration without printing keys or account identifiers. `scheduler_enabled` reports configuration, not process health; use `doctor` for the worker check. A nonzero retry count means delivery has failed and remains pending. Check issuer reachability and the current approved registration, then let the existing scheduler retry. Native Scheduled Job Type can enable execution logs when diagnosing an unexpected worker error.
+
+The privacy patch omits request payloads and automatic traceback locals from telemetry, native Error Log and failed Scheduled Job Log tracebacks. It retains exception type, message and stack locations, plus request method/path or job identity. Explicit messages supplied by callers must not contain credentials. Normal Pilot access logs omit query strings, but nginx upstream errors can include full invitation URLs. Redirecting after receipt does not prevent that exposure.
+
+Before enabling production invitations, verify that proxy error logs, rotated files, collector buffers, exports and backups are readable only by trusted infrastructure operators and required service accounts. Check Pilot log viewing and download access. Fluent Bit forwards nginx error logs, so its destination needs the same controls. Configure finite retention and verify deletion there and at external gateways. Record these checks in deployment approval. Pilot does not automatically enforce private log permissions or retention. Do not copy raw logs into support tickets.
+
 ## Native email service
 
 Passport calls `frappe.sendmail`; Frappe Email Queue and the existing mail service own transport/retries. Configure the issuer's outgoing Email Account with the provider's SMTP settings, or its installed native `override_email_send` delivery integration. Use the sender/domain required by that service. Provider credentials stay in the site's native configuration, never the repository. Passport does not select or require SendGrid or another provider.
@@ -64,10 +90,10 @@ For local capture only, use a loopback Mailpit SMTP endpoint and inbox. It is no
 
 Use dedicated sessions and the unchanged seeded identity:
 
-1. Password login from the client returns to usable Desk; User Menu opens Frappe ID account.
-2. Email-code login delivers through the configured native service and returns to Desk. Respect five sends per email and twenty per IP per hour; never clear counters to make a test pass.
+1. Password login from the client returns to the native user landing page. Check Website Users as well as System Users; Passport must not grant Desk permissions to change the destination.
+2. Email-code login delivers through the configured native service and returns to the native landing page. Respect five sends per email and twenty per IP per hour; never clear counters to make a test pass.
 3. Account email remains read-only, display name remains unchanged, and sensitive actions still require a fresh password.
-4. Leave Desk for more than five minutes, confirm access blocks, then explicitly validate and return to Desk. Never replay the interrupted application action.
-5. Local logout ends access; issuer device logout prevents later client renewal. Clean up only the dedicated sessions.
+4. Leave the application for more than five minutes, confirm access blocks, then explicitly validate and return through the native landing page. Never replay the interrupted application action.
+5. Local logout ends access; issuer device logout prevents later client renewal. On failed renewal, verify that retry remains available and that “Log out and return to login” ends the local session through native CSRF-protected logout. Test fresh local login during issuer outage and after issuer revocation. Clean up only the dedicated sessions.
 
 Record actual outcomes and screenshots locally. A build/preflight success does not establish delivery, hidden-tab behavior, every network failure or production readiness. If a build or check fails, keep the maintenance window open and investigate. Automatic build rollback restores assets, not Python source, dependency installations, database migrations or service configuration. A hard process kill, host failure or storage failure can prevent rollback; use the preserved source/assets and operational backups for those cases. Do not reset identity/session state as a recovery shortcut.

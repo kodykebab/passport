@@ -11,9 +11,11 @@ from passport_client import auth, protocol
 
 class CompletionFailureTests(unittest.TestCase):
 	def test_completion_failure_cleans_up_pending_session(self):
+		frappe.local.conf = frappe._dict()
 		frappe.local.session = frappe._dict(user="Guest")
 		frappe.local.flags = frappe._dict()
 		frappe.local.db = Mock()
+		frappe.local.db.get_value.return_value = frappe._dict(name="association", access_epoch="epoch")
 		frappe.local.request = SimpleNamespace(
 			args={"state": "state", "code": "code"}, cookies={"passport_browser": "browser"}
 		)
@@ -61,5 +63,5 @@ class CompletionFailureTests(unittest.TestCase):
 				clear.assert_called_once()
 				self.assertTrue(attempt["spent"])
 		finally:
-			for key in ("session", "flags", "db", "request", "login_manager"):
+			for key in ("conf", "session", "flags", "db", "request", "login_manager"):
 				setattr(frappe.local, key, None)

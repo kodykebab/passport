@@ -10,7 +10,7 @@ from werkzeug.exceptions import Forbidden
 
 class ClientBoundaryTests(unittest.TestCase):
 	def setUp(self):
-		frappe.local.request = SimpleNamespace(path="/", cookies={"sid": "browser"})
+		frappe.local.request = SimpleNamespace(path="/", method="POST", cookies={"sid": "browser"})
 		frappe.local.form_dict = frappe._dict(cmd="frappe.website.doctype.web_form.web_form.accept")
 		frappe.local.flags = frappe._dict()
 		for key in ("request", "form_dict", "flags"):
@@ -28,6 +28,20 @@ class ClientBoundaryTests(unittest.TestCase):
 					federation.boundary()
 
 	def test_root_rpc_cannot_override_browser_session(self):
+		frappe.form_dict.sid = "foreign-session"
+		with self.assertRaises(Forbidden):
+			federation.boundary()
+
+	def test_native_login_command_matches_only_its_post_route(self):
+		frappe.form_dict.cmd = "login"
+		frappe.request.path = "/api/method/login"
+		for sid in ("Guest", "browser"):
+			frappe.request.cookies = {"sid": sid}
+			federation.boundary()
+		frappe.request.method = "GET"
+		with self.assertRaises(Forbidden):
+			federation.boundary()
+		frappe.request.method = "POST"
 		frappe.form_dict.sid = "foreign-session"
 		with self.assertRaises(Forbidden):
 			federation.boundary()

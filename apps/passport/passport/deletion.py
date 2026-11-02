@@ -1,7 +1,7 @@
 """Durable self-service deletion, fenced before native hooks can commit."""
 
 import frappe
-from frappe.sessions import delete_session
+from passport_core.store import delete_stored_session
 
 from passport import store
 
@@ -48,7 +48,7 @@ def finish(subject):
 				raise ValueError("The original user has been replaced")
 			frappe.db.set_value("User", user, "enabled", 0)
 		for (sid,) in frappe.db.sql("SELECT sid FROM tabSessions WHERE user=%s", user):
-			delete_session(sid, user=user, reason="Frappe ID account deletion")
+			delete_stored_session(sid, user=user, reason="Frappe ID account deletion")
 		if frappe.db.exists("Passport Account", subject):
 			frappe.delete_doc("Passport Account", subject, ignore_permissions=True, delete_permanently=True)
 		if frappe.db.exists("User", user):

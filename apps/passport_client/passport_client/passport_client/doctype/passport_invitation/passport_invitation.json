@@ -1,0 +1,25 @@
+{
+ "doctype": "DocType",
+ "name": "Passport Invitation",
+ "module": "Passport Client",
+ "autoname": "hash",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "field_order": ["user", "recipient_email", "inviter", "token_digest", "expires_at", "status", "association", "accepted_epoch", "accepted_attempt", "accepted_by", "accepted_at"],
+ "fields": [
+  {"fieldname": "user", "fieldtype": "Link", "options": "User", "label": "Local account", "reqd": 1, "read_only": 1, "in_list_view": 1},
+  {"fieldname": "recipient_email", "fieldtype": "Data", "label": "Delivery address", "reqd": 1, "read_only": 1},
+  {"fieldname": "inviter", "fieldtype": "Link", "options": "User", "label": "Inviter", "reqd": 1, "read_only": 1},
+  {"fieldname": "token_digest", "fieldtype": "Data", "label": "Secret digest", "reqd": 1, "hidden": 1, "read_only": 1},
+  {"fieldname": "expires_at", "fieldtype": "Datetime", "label": "Expires at", "reqd": 1, "read_only": 1, "in_list_view": 1},
+  {"fieldname": "status", "fieldtype": "Select", "options": "Pending\nCancelled\nAccepted", "label": "Status", "default": "Pending", "reqd": 1, "read_only": 1, "in_list_view": 1},
+  {"fieldname": "association", "fieldtype": "Data", "label": "Accepted identity", "read_only": 1},
+  {"fieldname": "accepted_epoch", "fieldtype": "Data", "label": "Accepted epoch", "read_only": 1, "hidden": 1},
+  {"fieldname": "accepted_attempt", "fieldtype": "Data", "label": "Accepted proof attempt", "read_only": 1, "hidden": 1},
+  {"fieldname": "accepted_by", "fieldtype": "Link", "options": "User", "label": "Accepted by", "read_only": 1},
+  {"fieldname": "accepted_at", "fieldtype": "Datetime", "label": "Accepted at", "read_only": 1}
+ ],
+ "permissions": [{"role": "System Manager", "read": 1, "create": 1, "write": 1}],
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

@@ -1,18 +1,18 @@
-# Frappe ID — Passport development PoC
+# Frappe ID: Passport candidate
 
-Code and repository naming remain `passport`. See the [active scope](docs/architecture-and-plan.md) and [login/lease contract](docs/prebuild/login-and-lease-contract.md).
+Code and repository naming remain `passport`. See the [login/lease contract](docs/prebuild/login-and-lease-contract.md) and [historical iteration notes](docs/architecture-and-plan.md).
 
-Keep the existing Mac bench and Frappe development commit `4dc04fac4dd5bf20feb9f24e029202b3eadb52b8`. A separate Ubuntu development bench uses the same commit and framework patch. This iteration targets `id.localhost:8080` and `site1.localhost:8080`; the existing second site remains outside validation scope. Do not upgrade to v16 or replace the Mac environment.
+The candidate targets the pinned v16.54.0 and v17 development revisions listed with the [framework patches](patches/README.md). One Passport source and signed protocol serve both. Use a separate prepared bench; preserve existing environments and do not downgrade a v17 development database. See [deployment](docs/deployment.md) for version and operational requirements.
 
 Run the existing services with `env/start.sh`. Demo issuer login remains `alice@example.com` / `alice-passport-1`; admin password remains `admin`. Preserve seeded accounts and manually provision identity links and keys. Site users, roles, names and admission remain site-owned.
 
-Implementation sequence: Ed25519 issuer/client authentication and discovery/JWKS; durable native-session-bound five-minute leases across HTTP/realtime; small account page with display-name edits, read-only email and browser-session logout. This is a development PoC, not production readiness.
+Passport provides Ed25519 issuer/client authentication, discovery/JWKS, native-session-bound five-minute leases across HTTP and both realtime backends, account controls, site invitations and approved admission. Pilot prepares enrollment and fences restore/clone operations; an issuer administrator approves trust. Site users and roles retain application permissions. This candidate is not production clearance.
 
-Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Automatic site-user creation, email changes, Cloud integration, notifications and clone/restore orchestration are deferred. Opt-in issuer signup and existing-account linking are described below.
+Email-code login is available for existing issuer accounts alongside password login. Account changes still require a fresh password. Automatic site-user creation and email changes are deferred. Cloud teams govern infrastructure access independently of site invitations. Opt-in issuer signup and existing-account linking are described below.
 
 ## Run and validate this iteration
 
-Start services with `env/start.sh`. In another terminal, run `env/setup.sh` to migrate **only the existing** issuer and first client, preserve existing keys on reruns, and register the client's public key. It installs the shared `passport_core` helpers into the existing bench and does not create sites or accounts. The retained checkout has the small [framework patch](patches/frappe-development-session-integration.patch) applied; do not replace it with the historical v16 patch.
+Start services with `env/start.sh`. In another terminal, run `env/setup.sh` to migrate **only the existing** issuer and first client, preserve existing keys on reruns, and register the client's public key. It installs the shared `passport_core` helpers into the existing bench and does not create sites or accounts. Candidate deployment requires both [framework patches in order](patches/README.md); preflight rejects a checkout missing either patch. Do not replace them with the historical v16 patch.
 
 Open `http://site1.localhost:8080/passport/login`. Manage the issuer profile and browser sessions at `http://id.localhost:8080/account`. After lease expiry, use `/passport/status` on the client to explicitly validate and then return to the site. Interrupted actions are never replayed.
 
@@ -46,6 +46,14 @@ For local testing, run Mailpit bound to loopback (`127.0.0.1:1025` for SMTP and 
 Choose **Use email code** on the issuer login page and retrieve the matching request identifier from the local inbox. Use the same browser to enter the code. Each tab has an independent attempt; resends replace the previous code. Issuance counters use Frappe's persistent-cache hook so ordinary site cache clearing preserves their limits and expiry. The [email-login contract](docs/prebuild/email-login-contract.md) defines expiry, limits and session behavior.
 
 ## Regression tests
+
+The isolated realtime middleware test uses the installed Socket.IO packages and the patched middleware source. It starts loopback-only sockets with controlled authentication responses and time; it does not connect to a site or database. It covers direct and broadcast output, acknowledgements, initial app output, inbound events, renewal races, invalid deadlines, cleanup and non-Passport sessions.
+
+```sh
+node tests/realtime_middleware.cjs .bench/apps/frappe .bench/apps/frappe/realtime/middlewares/authenticate.js
+```
+
+This test does not replace the live realtime integration test or establish compatibility with other Socket.IO versions, clustered adapters or connection-state recovery.
 
 ```sh
 .bench/env/bin/python -m unittest discover -s tests -p 'test_*.py'

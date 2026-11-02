@@ -7,6 +7,7 @@ import time
 
 import frappe
 from live_support import ROOT, BrowserSessions, check, db, renew, store
+from passport_core.store import native_session_id
 
 node = shutil.which("node")
 if not node:
@@ -16,9 +17,9 @@ with BrowserSessions() as sessions:
 	browser, csrf, sid = sessions.login()
 	with db():
 		port = frappe.conf.socketio_port
-		row = store.get("federation", sid)
+		row = store.get("federation", native_session_id(sid))
 		row["exp"] = int(time.time()) + 10
-		store.put("federation", sid, row)
+		store.put("federation", native_session_id(sid), row)
 
 	for reject in (False, True):
 		r = subprocess.run(

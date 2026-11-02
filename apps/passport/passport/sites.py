@@ -21,7 +21,11 @@ def response():
 		render_page(
 			"passport",
 			"Your sites",
-			{"page": "sites", "title": "Your sites", "sites": connections.sites(frappe.session.user)},
+			{
+				"page": "sites",
+				"title": "Your sites",
+				"sites": connections.sites(frappe.session.user, picker=True),
+			},
 		),
 		content_type="text/html",
 		headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},

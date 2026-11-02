@@ -8,11 +8,12 @@ from urllib.parse import urlencode
 
 import frappe
 import jwt
+from passport_core.store import native_session_id
 from werkzeug.exceptions import BadRequest
 from werkzeug.utils import redirect
 from werkzeug.wrappers import Response
 
-from passport import connections, consent, protocol, store
+from passport import connections, consent, protocol, registration, store
 
 
 def issuer():
@@ -103,7 +104,7 @@ def authenticate():
 	client = frappe.db.get_value(
 		"Passport Client",
 		{"name": client_id, "enabled": 1},
-		["name", "public_jwk", "redirect_uri"],
+		["name", "public_jwk", "redirect_uri", "registration_revision"],
 		as_dict=True,
 	)
 	if not client:
@@ -131,7 +132,7 @@ def authorize():
 	client = frappe.db.get_value(
 		"Passport Client",
 		{"name": a.get("client_id"), "enabled": 1},
-		["name", "redirect_uri", "title"],
+		["name", "redirect_uri", "title", "registration_revision"],
 		as_dict=True,
 	)
 	if not client or a.get("redirect_uri") != client.redirect_uri:
@@ -154,25 +155,30 @@ def authorize():
 		connections.check(frappe.session.user, client.name)
 	except ValueError:
 		return connections.revoked_page()
-	if a.get("passport_action") == "link":
-		return consent.page(client, a)
-	return issue_grant(client, a)
+	try:
+		if a.get("passport_action") == "link":
+			return consent.page(client, a)
+		return issue_grant(client, a)
+	except ValueError:
+		return json_response(403, {"error": "access_denied"})
 
 
 def issue_grant(client, a, action="login"):
 	generation = connections.check(frappe.session.user, client.name)
+	revision = registration.check(client.name, client.registration_revision)
 	code = secrets.token_urlsafe(32)
 	store.create(
 		"grant",
 		protocol.digest(code.encode()),
 		{
 			"client": client.name,
+			"registration_revision": revision,
 			"action": action,
 			"connection_generation": generation,
 			"redirect_uri": client.redirect_uri,
 			"user": frappe.session.user,
 			"sub": get_subject(frappe.session.user),
-			"issuer_sid": frappe.session.sid,
+			"issuer_sid": native_session_id(frappe.session.sid),
 			"nonce": a["nonce"],
 			"challenge": a["code_challenge"],
 			"exp": time.time() + 60,
@@ -187,7 +193,7 @@ def token(client, body):
 	grant = store.get("grant", key)
 	if not grant:
 		raise ValueError("invalid_grant")
-	native = store.get_valid_native_session(grant["issuer_sid"], grant["user"], lock=True)
+	native = store.get_valid_native_session(grant["issuer_sid"], grant["user"], lock=True, stored=True)
 	if not native:
 		raise ValueError("login_revoked")
 	grant = store.get("grant", key, lock=True)
@@ -201,6 +207,9 @@ def token(client, body):
 	):
 		raise ValueError("invalid_grant")
 	connections.check(grant["user"], client.name, grant.get("connection_generation", 0))
+	revision = registration.check(client.name, client.registration_revision)
+	if revision != (grant.get("registration_revision") or ""):
+		raise ValueError("client_registration_changed")
 	if grant.get("action") == "link":
 		connections.remember(grant["user"], client.name)
 	now = int(time.time())
@@ -240,13 +249,16 @@ def lease(client, body):
 	if (
 		not login
 		or login["client"] != client.name
-		or not store.get_valid_native_session(login["issuer_sid"], login["user"], lock=True)
+		or not store.get_valid_native_session(login["issuer_sid"], login["user"], lock=True, stored=True)
 	):
 		raise ValueError("login_revoked")
 	login = store.get("login", body["sid"], lock=True)
 	if login["revoked"] or login["deadline"] <= time.time():
 		raise ValueError("login_revoked")
 	connections.check(login["user"], client.name, login.get("connection_generation", 0))
+	revision = registration.check(client.name, client.registration_revision)
+	if revision != (login.get("registration_revision") or ""):
+		raise ValueError("client_registration_changed")
 	connections.remember(login["user"], client.name)
 	if "binding" not in login:
 		if frappe.request.path != "/passport/complete" or login["pending_until"] <= time.time():
@@ -270,7 +282,13 @@ def lease(client, body):
 	return {"lease": signing(claims, "passport-lease+jwt")}
 
 
-BACKCHANNEL = {"/oidc/token": token, "/passport/complete": lease, "/passport/renew": lease}
+BACKCHANNEL = {
+	"/oidc/token": token,
+	"/passport/complete": lease,
+	"/passport/renew": lease,
+	"/passport/registration": registration.status,
+	"/passport/site-access": connections.report,
+}
 ROUTES = {
 	"/.well-known/openid-configuration": ("GET", discovery),
 	"/passport/jwks": ("GET", jwks),

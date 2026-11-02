@@ -3,9 +3,14 @@
 import frappe
 from frappe.utils.password import check_password
 
+try:
+	from frappe.utils.password import MAX_PASSWORD_SIZE
+except ImportError:
+	from frappe.auth import MAX_PASSWORD_SIZE
+
 
 def confirm_password(user, password):
-	from frappe.auth import MAX_PASSWORD_SIZE, get_login_attempt_tracker
+	from frappe.auth import get_login_attempt_tracker
 
 	trackers = [get_login_attempt_tracker(user), get_login_attempt_tracker(frappe.local.request_ip)]
 	try:

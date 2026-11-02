@@ -13,7 +13,10 @@ from pathlib import Path
 from filelock import FileLock
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = "4dc04fac4dd5bf20feb9f24e029202b3eadb52b8"
+FRAMEWORK_PATCHES = {
+	"2fcb9397a1f1da353b21e53d2f97ec56653acd02": "",
+	"22053d4a3a14c08dad29776a7b58422710ad409a": "v17",
+}
 
 
 def require(condition, message):
@@ -25,28 +28,33 @@ def check_node_version():
 	version = subprocess.check_output(["node", "--version"], text=True).strip()
 	parts = tuple(int(part) for part in version.removeprefix("v").split("."))
 	require(
-		len(parts) == 3 and ((parts[0] == 20 and parts >= (20, 19, 0)) or parts >= (22, 12, 0)),
-		"Frontend requires Node 20.19+ within v20, or Node 22.12+",
+		len(parts) == 3 and parts >= (24, 0, 0),
+		"Pinned Frappe frameworks require Node 24 or newer",
 	)
 
 
-def preflight(bench):
+def check_framework(bench):
 	head = subprocess.check_output(
 		["git", "-C", str(bench / "apps/frappe"), "rev-parse", "HEAD"], text=True
 	).strip()
-	require(head == BASELINE, "Unexpected Frappe baseline; do not upgrade the retained checkout")
-	subprocess.run(
-		[
-			"git",
-			"-C",
-			str(bench / "apps/frappe"),
-			"apply",
-			"--reverse",
-			"--check",
-			str(ROOT / "patches/frappe-development-session-integration.patch"),
-		],
-		check=True,
-	)
+	require(head in FRAMEWORK_PATCHES, "Expected a pinned supported Frappe revision")
+	for patch in ("frappe-development-session-integration.patch", "frappe-telemetry-privacy.patch"):
+		subprocess.run(
+			[
+				"git",
+				"-C",
+				str(bench / "apps/frappe"),
+				"apply",
+				"--reverse",
+				"--check",
+				str(ROOT / "patches" / FRAMEWORK_PATCHES[head] / patch),
+			],
+			check=True,
+		)
+
+
+def preflight(bench):
+	check_framework(bench)
 	import frappe
 
 	require(
@@ -206,12 +214,15 @@ def build(bench, sites):
 
 def main():
 	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument("command", choices=("check", "build"))
+	parser.add_argument("command", choices=("framework", "check", "build"))
 	parser.add_argument("--bench", type=Path, default=ROOT / ".bench")
 	parser.add_argument("--issuer", default="id.localhost")
 	parser.add_argument("--client", default="site1.localhost")
 	args = parser.parse_args()
 	bench = args.bench.resolve()
+	if args.command == "framework":
+		check_framework(bench)
+		return
 	os.chdir(bench / "sites")
 	preflight(bench)
 	sites = [(args.issuer, "passport"), (args.client, "passport_client")]

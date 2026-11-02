@@ -2,6 +2,73 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+test("invitation confirms the local password without posting the invitation secret", async ({ page }) => {
+  const submitted = await render(page, {
+    page: "invitation", stage: "confirm", title: "Connect your Frappe ID",
+    user: "alex@work.example", site: "Acme Support", csrf_token: "test-csrf",
+  });
+  await expect(page.getByLabel("Site account")).toHaveValue("alex@work.example");
+  await page.getByLabel("Confirm your site password").fill("local-password");
+  await page.getByRole("button", { name: "Continue to Frappe ID" }).click();
+  await expect(page.getByText("Submitted", { exact: true })).toBeVisible();
+  expect(submitted()).toEqual({ path: "/passport/invitation", fields: {
+    action: "begin", csrf_token: "test-csrf", password: "local-password",
+  }});
+});
+
+test("invitation displays different emails and requires explicit acceptance", async ({ page }) => {
+  const submitted = await render(page, {
+    page: "invitation", stage: "accept", title: "Accept your invitation",
+    user: "alex@work.example", site: "Acme Support", csrf_token: "test-csrf",
+    attempt: "verified-attempt", profile: { email: "alex@personal.example" },
+  });
+  await expect(page.getByLabel("Site account")).toHaveValue("alex@work.example");
+  await expect(page.getByLabel("Frappe ID", { exact: true })).toHaveValue("alex@personal.example");
+  await page.screenshot({ path: test.info().outputPath("invitation-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.getByRole("button", { name: "Accept invitation" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
+  await page.screenshot({ path: test.info().outputPath("invitation-mobile.png"), fullPage: true });
+  expect(submitted()).toBeUndefined();
+  await page.getByRole("button", { name: "Accept invitation" }).click();
+  await expect(page.getByText("Submitted", { exact: true })).toBeVisible();
+  expect(submitted()).toEqual({ path: "/passport/invitation", fields: {
+    action: "accept", csrf_token: "test-csrf", attempt: "verified-attempt",
+  }});
+});
+
+test("unavailable invitation has no acceptance action", async ({ page }) => {
+  await render(page, { page: "invitation", stage: "unavailable", title: "Invitation unavailable", error: "This invitation is unavailable." });
+  await expect(page.getByText("This invitation is unavailable.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept invitation" })).toHaveCount(0);
+});
+
+test("failed renewal logs out through native CSRF POST and permits retry on failure", async ({ page }) => {
+  await render(page, {
+    page: "session", title: "Validation failed", message: "Issuer unavailable",
+    csrf_token: "test-csrf", logout: true, link: "/login",
+    link_label: "Log out and return to login",
+  });
+  let attempts = 0;
+  await page.route("http://passport.test/api/method/logout", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-frappe-csrf-token"]).toBe("test-csrf");
+    attempts += 1;
+    await route.fulfill({ status: attempts === 1 ? 503 : 200, body: "{}" });
+  });
+  await page.route("http://passport.test/login", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<h1>Native login</h1>" })
+  );
+  await expect(page.getByRole("button", { name: "Retry validation" })).toBeVisible();
+  const logout = page.getByRole("button", { name: "Log out and return to login" });
+  await logout.click();
+  await expect(page.getByText("Could not log out. Please try again.", { exact: true })).toBeVisible();
+  await expect(logout).toBeEnabled();
+  await logout.click();
+  await expect(page.getByRole("heading", { name: "Native login" })).toBeVisible();
+  expect(attempts).toBe(2);
+});
+
 const build = resolve("../apps/passport/passport/public/ui");
 const manifest = JSON.parse(
   await readFile(resolve(build, "manifest.json"), "utf8")

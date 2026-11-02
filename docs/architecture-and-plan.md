@@ -1,10 +1,10 @@
 # Frappe ID development iteration
 
-Active scope, 20 October 2026. Product branding is **Frappe ID**; repository, apps and identifiers remain `passport`. This development PoC is not a production release.
+Historical iteration scope, 20 October 2026. Product branding is **Frappe ID**; repository, apps and identifiers remain `passport`. Current candidate behavior and deployment requirements are in the [README](../README.md) and [deployment procedure](deployment.md).
 
 ## Baseline and scope
 
-Keep the existing Mac bench and Frappe development checkout at `4dc04fac4dd5bf20feb9f24e029202b3eadb52b8`. A separately provisioned Ubuntu development bench uses the same checkout and framework patch. Do not upgrade to v16 or replace the Mac bench. Inspect and test native HTTP/session/realtime integration on this checkout.
+The current candidate uses the pinned Frappe revisions in [deployment](deployment.md). Existing development benches remain unchanged; validation uses separate disposable fixtures.
 
 Implement iteratively against `id.localhost` and `site1.localhost`. Keep the existing demo password authentication, seeded accounts, manual provisioning, identity links and site-owned admission. Leave the existing second site intact; broader multi-site validation is deferred.
 
@@ -18,7 +18,7 @@ Test real login and existing identity links; algorithm/key/audience/nonce and cl
 
 ## Later work
 
-Later work includes automatic site-account creation, remembered/general consent, email change, Cloud directory/provisioning, notifications, clone/restore orchestration and wider multi-site validation. A framework upgrade or replacement bench is outside this iteration.
+The original iteration deferred automatic site-account creation, remembered/general consent, email change, Cloud directory/provisioning, notifications, clone/restore orchestration and wider multi-site validation. Consult the current deployment and client documentation for implemented lifecycle and admission behavior.
 
 ## Email-login iteration
 

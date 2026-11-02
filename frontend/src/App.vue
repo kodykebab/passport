@@ -7,6 +7,7 @@ import SitePicker from "./SitePicker.vue";
 import AccountPage from "./AccountPage.vue";
 import AccountLink from "./AccountLink.vue";
 import LinkConsent from "./LinkConsent.vue";
+import Invitation from "./Invitation.vue";
 import SessionRecovery from "./SessionRecovery.vue";
 const { data } = defineProps({ data: Object });
 onMounted(() =>
@@ -57,6 +58,7 @@ const title = computed(() =>
           <EmailLogin v-else-if="data.page === 'email'" :data="data" />
           <AccountLink v-else-if="data.page === 'link'" :data="data" />
           <LinkConsent v-else-if="data.page === 'consent'" :data="data" />
+          <Invitation v-else-if="data.page === 'invitation'" :data="data" />
           <SessionRecovery v-else :data="data" />
         </div>
       </div>

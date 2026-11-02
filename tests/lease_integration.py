@@ -5,35 +5,37 @@ import time
 
 import frappe
 from live_support import SITE, USER, BrowserSessions, check, db, get, renew, store
+from passport_core.store import delete_stored_session, native_session_id
 
 with BrowserSessions() as sessions:
 	b, csrf, sid = sessions.login()
 	with db():
-		row = store.get("federation", sid)
+		row = store.get("federation", native_session_id(sid))
 		check("lease capped at five minutes", 0 < row["exp"] - time.time() <= 300)
-		before = frappe.db.sql("SELECT lastupdate FROM tabSessions WHERE sid=%s", sid)[0][0]
+		before = frappe.db.sql("SELECT lastupdate FROM tabSessions WHERE sid=%s", native_session_id(sid))[0][
+			0
+		]
 	check("renew succeeds", renew(b, csrf).ok)
 	with db():
-		after = frappe.db.sql("SELECT lastupdate FROM tabSessions WHERE sid=%s", sid)[0][0]
+		after = frappe.db.sql("SELECT lastupdate FROM tabSessions WHERE sid=%s", native_session_id(sid))[0][0]
 		check("renewal is not activity", before == after)
-		row = store.get("federation", sid)
+		row = store.get("federation", native_session_id(sid))
 		row["exp"] = int(time.time()) - 1
-		store.put("federation", sid, row)
+		store.put("federation", native_session_id(sid), row)
 	check("HTTP blocks expired lease", get(b).status_code == 403)
 	with db():
 		check("expired lease preserves native SQL session", bool(store.get_valid_native_session(sid)))
 	check("recovery page remains reachable", b.get(SITE + "/passport/status").ok)
 	check("authoritative retry resumes lease", renew(b, csrf).ok and get(b).ok)
 	with db():
-		row = store.get("federation", sid)
+		row = store.get("federation", native_session_id(sid))
 		row["exp"] = int(time.time()) - 1
-		store.put("federation", sid, row)
+		store.put("federation", native_session_id(sid), row)
 	# Wrong issuer authority is tested by deleting the associated issuer session, not waiting out an outage.
 	with db("id.localhost"):
 		login_record = store.get("login", row["protocol_sid"])
-		from frappe.sessions import delete_session
 
-		delete_session(login_record["issuer_sid"], user=USER)
+		delete_stored_session(login_record["issuer_sid"], USER, "Disposable issuer session revocation")
 	check("issuer native logout prevents expired lease recovery", not renew(b, csrf).ok)
 	check("failed recovery remains blocked", get(b).status_code == 403)
 	check(
@@ -41,7 +43,10 @@ with BrowserSessions() as sessions:
 		b.post(SITE + "/api/method/logout", headers={"X-Frappe-CSRF-Token": csrf}).ok,
 	)
 	with db():
-		check("local logout leaves terminal federation state", store.get("federation", sid)["revoked"])
+		check(
+			"local logout leaves terminal federation state",
+			store.get("federation", native_session_id(sid))["revoked"],
+		)
 		check("native session removed", not store.get_valid_native_session(sid))
 
 	# SQL fallback must honor native absolute deadline, not just Redis.
@@ -49,11 +54,13 @@ with BrowserSessions() as sessions:
 	with db():
 		from datetime import datetime, timezone
 
-		raw = frappe.db.sql("SELECT sessiondata FROM tabSessions WHERE sid=%s", sid)[0][0]
+		raw = frappe.db.sql("SELECT sessiondata FROM tabSessions WHERE sid=%s", native_session_id(sid))[0][0]
 		data = json.loads(raw)
 		data["session_end"] = datetime.fromtimestamp(time.time() - 1, timezone.utc).isoformat()
-		frappe.db.sql("UPDATE tabSessions SET sessiondata=%s WHERE sid=%s", (json.dumps(data), sid))
-		frappe.cache.hdel("session", sid)
+		frappe.db.sql(
+			"UPDATE tabSessions SET sessiondata=%s WHERE sid=%s", (json.dumps(data), native_session_id(sid))
+		)
+		frappe.cache.hdel("session", native_session_id(sid))
 	check(
 		"SQL fallback rejects absolute expiry",
 		get(b).status_code == 403 or get(b).json().get("message") != USER,
@@ -61,7 +68,10 @@ with BrowserSessions() as sessions:
 
 	b, csrf, sid = sessions.login()
 	with db():
-		frappe.db.sql("UPDATE tabSessions SET lastupdate=DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE sid=%s", sid)
+		frappe.db.sql(
+			"UPDATE tabSessions SET lastupdate=DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE sid=%s",
+			native_session_id(sid),
+		)
 	check("idle expiry prevents renewal", not renew(b, csrf).ok)
 	print("Lease integration checks passed")
 
@@ -103,6 +113,7 @@ with BrowserSessions() as sessions:
 		with db():
 			check(
 				action + " leaves durable revocation",
-				store.get("federation", sid)["revoked"] or not store.get_valid_native_session(sid),
+				store.get("federation", native_session_id(sid))["revoked"]
+				or not store.get_valid_native_session(sid),
 			)
 	print("Delayed-response checks passed")

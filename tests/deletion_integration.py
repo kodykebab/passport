@@ -13,6 +13,7 @@ import requests
 from frappe.utils.password import check_password
 from live_support import ID, db
 from passport import deletion, oidc, store
+from passport_core.store import native_session_id
 
 
 class DeletionIntegrationTests(unittest.TestCase):
@@ -116,7 +117,7 @@ class DeletionIntegrationTests(unittest.TestCase):
 					"client": client.name,
 					"user": self.user,
 					"sub": self.subjects[0],
-					"issuer_sid": sid,
+					"issuer_sid": native_session_id(sid),
 					"revoked": False,
 					"deadline": body["deadline"],
 					"pending_until": time.time() + 120,

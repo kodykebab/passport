@@ -72,7 +72,7 @@ with db():
 	}
 	frappe.db.sql(
 		"INSERT INTO tabSessions(sid,user,sessiondata,lastupdate,status) VALUES(%s,%s,%s,%s,'Active')",
-		(sid, USER, json.dumps(data), now),
+		(store.native_session_id(sid), USER, json.dumps(data), now),
 	)
 
 reached_user, finished = threading.Event(), threading.Event()
@@ -125,5 +125,5 @@ try:
 finally:
 	worker.join(timeout=8)
 	with db():
-		frappe.db.sql("DELETE FROM tabSessions WHERE sid=%s", sid)
-		frappe.cache.hdel("session", sid)
+		frappe.db.sql("DELETE FROM tabSessions WHERE sid=%s", store.native_session_id(sid))
+		frappe.cache.hdel("session", store.native_session_id(sid))
