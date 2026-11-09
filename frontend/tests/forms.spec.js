@@ -595,3 +595,206 @@ test("site picker filters known sites and never links revoked sites", async ({
     page.getByText("No matching sites.", { exact: true })
   ).toBeVisible();
 });
+
+async function submitPasswordForVerification(
+  page,
+  verification = { method: "OTP App", setup: true },
+  tmp_id = "native-challenge"
+) {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await render(page, {
+    page: "password",
+    password_enabled: true,
+    destination: "/oidc/authorize?state=bound",
+    email_url: "/passport/email",
+    signup_url: "/passport/signup",
+  });
+  await page.route("**/api/method/login", async (route) => {
+    expect(
+      Object.fromEntries(new URLSearchParams(route.request().postData()))
+    ).toEqual({ usr: "alice@example.com", pwd: "correct" });
+    await route.fulfill({ json: { verification, tmp_id } });
+  });
+  await page.locator("input[name=usr]").fill("alice@example.com");
+  await page.locator("input[name=pwd]").fill("correct");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+}
+
+for (const method of ["OTP App", "Email", "SMS"]) {
+  test(`native MFA ${method} continues only after code verification`, async ({
+    page,
+  }) => {
+    const prompt =
+      method === "OTP App"
+        ? undefined
+        : "Check your delivery instructions. <b>Plain text</b>";
+    await submitPasswordForVerification(page, { method, setup: true, prompt });
+    const otp = page.getByLabel("Verification code");
+    await expect(otp).toBeFocused();
+    await expect(page.locator("input[name=pwd]")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Use email code" })
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Create a Frappe ID" })
+    ).toHaveCount(0);
+    await expect(page).not.toHaveURL(/oidc\/authorize/);
+    if (prompt)
+      await expect(page.getByText(prompt, { exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth)
+    ).toBe(375);
+    let calls = 0;
+    await page.route("**/api/method/login", async (route) => {
+      calls++;
+      expect(
+        Object.fromEntries(new URLSearchParams(route.request().postData()))
+      ).toEqual({
+        otp: calls === 1 ? "000000" : "123456",
+        tmp_id: "native-challenge",
+      });
+      await route.fulfill({
+        status: calls === 1 ? 401 : 200,
+        json:
+          calls === 1
+            ? { exc_type: "AuthenticationError" }
+            : { message: "Logged In" },
+      });
+    });
+    await otp.fill("000000");
+    await otp.press("Enter");
+    await expect(page.getByRole("alert")).toContainText("code is incorrect");
+    await expect(page.getByRole("alert")).toBeFocused();
+    await expect(otp).toHaveValue("");
+    expect(calls).toBe(1);
+    await otp.fill("123456");
+    await otp.press("Enter");
+    await expect(page).toHaveURL(
+      "http://passport.test/oidc/authorize?state=bound"
+    );
+    expect(calls).toBe(2);
+  });
+}
+
+for (const failure of ["expired", "throttle", "network"]) {
+  test(`native MFA ${failure} allows an explicit restart without replay`, async ({
+    page,
+  }) => {
+    await submitPasswordForVerification(page);
+    await expect(page.getByLabel("Verification code")).toBeVisible();
+    let calls = 0;
+    await page.route("**/api/method/login", async (route) => {
+      calls++;
+      if (failure === "network") return route.abort();
+      await route.fulfill({
+        status: failure === "expired" ? 500 : 429,
+        json: {
+          exc_type:
+            failure === "expired"
+              ? "ExpiredLoginException"
+              : "SecurityException",
+        },
+      });
+    });
+    await page.getByLabel("Verification code").fill("123456");
+    await page.getByRole("button", { name: "Verify", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText(
+      failure === "expired"
+        ? "attempt expired"
+        : failure === "throttle"
+        ? "Too many verification attempts"
+        : "Unable to reach"
+    );
+    expect(calls).toBe(1);
+    if (failure !== "expired")
+      await page.getByRole("button", { name: "Start over" }).click();
+    await expect(page.locator("input[name=pwd]")).toHaveValue("");
+    await expect(page.getByLabel("Verification code")).toHaveCount(0);
+    await page.route("**/api/method/login", async (route) => {
+      expect(
+        Object.fromEntries(new URLSearchParams(route.request().postData()))
+      ).toEqual({ usr: "alice@example.com", pwd: "new-password" });
+      await route.fulfill({ json: { message: "No App" } });
+    });
+    await page.locator("input[name=pwd]").fill("new-password");
+    await page.locator("input[name=pwd]").press("Enter");
+    await expect(page).toHaveURL(
+      "http://passport.test/oidc/authorize?state=bound"
+    );
+  });
+}
+
+for (const verification of [
+  { method: "Email", setup: false, token_delivery: false },
+  { method: "SMS", setup: false },
+  { method: "OTP App", setup: false },
+  { method: "Unknown", setup: true },
+]) {
+  test(`native MFA rejects unavailable ${verification.method}`, async ({
+    page,
+  }) => {
+    await submitPasswordForVerification(page, verification);
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByLabel("Verification code")).toHaveCount(0);
+    await expect(page.locator("input[name=pwd]")).toHaveValue("");
+    await expect(page).not.toHaveURL(/oidc\/authorize/);
+  });
+}
+
+test("native MFA requires a challenge ID", async ({ page }) => {
+  await submitPasswordForVerification(
+    page,
+    { method: "Email", setup: true },
+    ""
+  );
+  await expect(page.getByRole("alert")).toContainText("unavailable");
+  await expect(page.getByLabel("Verification code")).toHaveCount(0);
+});
+
+test("native MFA continues email verification into authenticator setup", async ({
+  page,
+}) => {
+  await submitPasswordForVerification(page, {
+    method: "Email",
+    setup: true,
+    prompt: "Enter your email code.",
+  });
+  await expect(page.getByLabel("Verification code")).toBeVisible();
+  let calls = 0;
+  await page.route("**/api/method/login", async (route) => {
+    calls++;
+    expect(
+      Object.fromEntries(new URLSearchParams(route.request().postData()))
+    ).toEqual({
+      otp: calls === 1 ? "123456" : "654321",
+      tmp_id: "native-challenge",
+    });
+    await route.fulfill({
+      json:
+        calls === 1
+          ? {
+              tmp_id: "native-challenge",
+              verification: {
+                method: "OTP App",
+                qrcode: "PHN2Zy8+",
+                otp_secret: "TESTSETUPKEY",
+              },
+            }
+          : { message: "No App" },
+    });
+  });
+  await page.getByLabel("Verification code").fill("123456");
+  await page.getByRole("button", { name: "Verify", exact: true }).click();
+  await expect(
+    page.getByAltText("QR code to scan with your authenticator app")
+  ).toHaveAttribute("src", "data:image/svg+xml;base64,PHN2Zy8+");
+  await expect(page.getByText("TESTSETUPKEY", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Verification code")).toHaveValue("");
+  await expect(page).not.toHaveURL(/oidc\/authorize/);
+  await page.getByLabel("Verification code").fill("654321");
+  await page.getByRole("button", { name: "Verify", exact: true }).click();
+  await expect(page).toHaveURL(
+    "http://passport.test/oidc/authorize?state=bound"
+  );
+  expect(calls).toBe(2);
+});
